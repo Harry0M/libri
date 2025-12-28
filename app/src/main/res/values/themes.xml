@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Splash Screen Theme with Material 3 -->
+    <style name="Theme.splashscreen" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="postSplashScreenTheme">@style/Theme.Libri</item>
+    </style>
+    
+    <!-- Main App Theme - Material 3 -->
+    <style name="Theme.Libri" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+    
+    <!-- Legacy theme name for compatibility -->
+    <style name="Theme.Learncompose" parent="Theme.Libri" />
+</resources>

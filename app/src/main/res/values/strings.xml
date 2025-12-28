@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Libri</string>
+    <string name="app_tagline">Discover and read millions of books</string>
+    <string name="default_web_client_id">266490267812-4e9r28hj8g09va8skbomdc5sskgcl7sc.apps.googleusercontent.com</string>
+</resources>
