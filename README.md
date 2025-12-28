@@ -1,12 +1,12 @@
-# Libri 📚
+# 📚 Libri
 
 <p align="center">
   <img src="app/src/main/res/mipmap-xxxhdpi/ic_launcher.webp" width="120" alt="Libri Logo">
 </p>
 
-<p align="center">
-  <strong>Your Personal Book Discovery & Reading Companion</strong>
-</p>
+> A modern, feature-rich ebook reader for Android
+
+Libri is an elegant Android application built with **Kotlin** and **Jetpack Compose** that enables users to discover, read, and manage their digital book collection. With access to over **70,000+ free ebooks** from Project Gutenberg and seamless integration with Open Library, Libri brings the world of literature to your fingertips.
 
 <p align="center">
   <a href="https://play.google.com/store/apps/details?id=com.theblankstate.libri">
@@ -16,90 +16,169 @@
 
 ---
 
-## 📖 About
-
-**Libri** is a modern Android app that helps you discover, read, and manage your book collection. With access to millions of books from Open Library and thousands of free eBooks from Project Gutenberg, Libri puts the world's literature at your fingertips.
-
 ## ✨ Features
 
-### 📚 Discover Books
-- **Open Library Integration**: Access millions of books from the world's largest open library
-- **Project Gutenberg**: Browse and download 70,000+ free eBooks
-- **Smart Search**: Search by title, author, subject, or ISBN
-- **Personalized Recommendations**: Get book suggestions based on your reading preferences
+### 📖 Reading Experience
+- **EPUB Reader** – Full-featured reader with chapter navigation, dark mode, and customizable font sizes
+- **PDF Reader** – Built-in PDF viewer for document reading
+- **Reading Progress** – Automatic progress tracking and bookmarks
+- **Offline Reading** – Download books for offline access
 
-### 📱 Reading Experience
-- **Built-in Reader**: Read books directly in the app
-- **Multiple Formats**: Support for EPUB, PDF, and more
-- **Offline Reading**: Download books for offline access
-- **Reading Progress**: Track your reading progress across devices
+### 📚 Book Discovery
+- **Project Gutenberg Integration** – Access 70,000+ free public domain ebooks
+- **Open Library API** – Search millions of books with detailed information
+- **Advanced Search** – Filter books by author, subject, language, and more
+- **Trending & Popular** – Discover popular books across various genres
 
-### 👤 Personal Library
-- **Custom Bookshelves**: Organize books into custom collections
-- **Reading Lists**: Create and manage your reading lists
-- **Favorites**: Quick access to your favorite books
-- **Reading History**: Keep track of what you've read
+### 📱 Library Management
+- **Personal Library** – Organize your books with custom shelves
+- **Reading Status** – Track books as "Want to Read", "Currently Reading", or "Finished"
+- **Cloud Sync** – Sync your library across devices with Firebase
+- **Book Details** – View cover images, descriptions, ratings, and edition information
 
-### 🔗 Integrations
-- **Open Library Account**: Connect your Open Library account to borrow books
-- **Google Sign-In**: Secure authentication with your Google account
-- **Cloud Sync**: Sync your preferences across devices
+### 🔐 Authentication
+- **Google Sign-In** – Quick authentication with your Google account
+- **Open Library Login** – Connect to borrow books from Internet Archive
+- **Firebase Authentication** – Secure user management
+
+### 🎨 User Experience
+- **Material Design 3** – Modern, beautiful UI with Material You theming
+- **Dark Mode** – Comfortable reading in any lighting condition
+- **Smooth Animations** – Polished transitions throughout the app
+- **Splash Screen** – Native Android 12+ splash screen support
+
+---
 
 ## 🛠️ Tech Stack
 
-- **Language**: Kotlin
-- **UI Framework**: Jetpack Compose with Material 3
-- **Architecture**: MVVM (Model-View-ViewModel)
-- **Networking**: Retrofit + OkHttp
-- **Image Loading**: Coil
-- **Authentication**: Firebase Auth + Google Sign-In
-- **Database**: Firebase Realtime Database
-- **Navigation**: Jetpack Navigation Compose
+| Category | Technology |
+|----------|------------|
+| **Language** | Kotlin |
+| **UI Framework** | Jetpack Compose |
+| **Architecture** | MVVM (ViewModel) |
+| **Networking** | Retrofit + OkHttp |
+| **Image Loading** | Coil |
+| **Navigation** | Navigation Compose |
+| **Authentication** | Firebase Auth + Google Sign-In |
+| **Database** | Firebase Realtime Database |
+| **Async** | Kotlin Coroutines |
 
-## 📱 Requirements
+---
 
-- Android 7.0 (API 24) or higher
-- Internet connection for book discovery and downloads
+## 📱 Screenshots
 
-## 🏗️ Building the Project
+<p align="center">
+  <img src="app/screenshots/home.jpg" width="200" alt="Home Screen" />
+  <img src="app/screenshots/library.jpg" width="200" alt="Library Screen" />
+  <img src="app/screenshots/book_details.jpg" width="200" alt="Book Details" />
+  <img src="app/screenshots/book_details_gutenberg.jpg" width="200" alt="Gutenberg Book Details" />
+</p>
+
+| Home | Library | Book Details | Gutenberg |
+|:----:|:-------:|:------------:|:---------:|
+| Browse trending books | Manage your collection | View book info & borrow | Free ebooks from Project Gutenberg |
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
-- Android Studio Hedgehog (2023.1.1) or newer
+- Android Studio Hedgehog or newer
 - JDK 11 or higher
-- Android SDK 35
+- Android SDK 24+ (Android 7.0)
 
-### Steps
+### Installation
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/Harry0M/Libri.git
-   cd Libri
+   git clone https://github.com/Harry0M/libri.git
+   cd libri
    ```
 
-2. **Open in Android Studio**
-   - Open Android Studio
-   - Select "Open an Existing Project"
-   - Navigate to the cloned directory
-
-3. **Configure Firebase**
+2. **Set up Firebase**
    - Create a Firebase project at [Firebase Console](https://console.firebase.google.com/)
-   - Add an Android app with package name `com.theblankstate.libri`
+   - Enable Authentication (Google Sign-In)
+   - Enable Realtime Database
    - Download `google-services.json` and place it in the `app/` directory
 
-4. **Build and Run**
+3. **Build and Run**
    ```bash
    ./gradlew assembleDebug
    ```
-   Or use Android Studio's Run button
+
+---
+
+## 📁 Project Structure
+
+```
+app/
+├── src/main/java/com/theblankstate/libri/
+│   ├── data/              # Repositories and data sources
+│   ├── data_retrieval/    # API services
+│   ├── datamodel/         # Data models and entities
+│   ├── ui/                # Theme and navigation
+│   ├── view/              # Composable screens
+│   │   ├── components/    # Reusable UI components
+│   │   └── *.kt           # Feature screens
+│   └── viewModel/         # ViewModels for each feature
+```
+
+---
+
+## 🌐 API Integrations
+
+### Open Library API
+- Book search and metadata
+- Cover images
+- Edition information
+- User reading lists
+
+### Gutendex API
+- Project Gutenberg catalog
+- Free ebook downloads (EPUB, PDF)
+- Book metadata and cover images
+
+---
+
+## 🔒 Permissions
+
+| Permission | Purpose |
+|------------|---------|
+| `INTERNET` | Fetch book data and download ebooks |
+| `POST_NOTIFICATIONS` | Download completion notifications |
+
+---
 
 ## 📄 Documentation
 
 - [Privacy Policy](PRIVACY_POLICY.md)
 - [Terms of Service](TERMS_OF_SERVICE.md)
 
+---
+
+## 📜 License
+
+```
+Copyright 2025 harryom
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+---
+
 ## 🤝 Contributing
 
-We welcome contributions! Please feel free to submit issues and pull requests.
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
@@ -107,22 +186,24 @@ We welcome contributions! Please feel free to submit issues and pull requests.
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
+---
+
 ## 📧 Contact
 
-**The Blank State Team**
-- Email: [theblankstateteam@gmail.com](mailto:theblankstateteam@gmail.com)
-- GitHub: [@Harry0M](https://github.com/Harry0M)
+**harryom** – [theblankstate.com](https://theblankstate.com)
 
-## 📜 License
+Email: [theblankstateteam@gmail.com](mailto:theblankstateteam@gmail.com)
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+GitHub: [@Harry0M](https://github.com/Harry0M)
+
+---
 
 ## 🙏 Acknowledgments
 
-- [Open Library](https://openlibrary.org/) - For their amazing open book API
-- [Project Gutenberg](https://www.gutenberg.org/) - For providing free eBooks
-- [Gutendex](https://gutendex.com/) - For the Gutenberg API
-- [Material Design 3](https://m3.material.io/) - For the beautiful design system
+- [Project Gutenberg](https://www.gutenberg.org/) for providing free access to public domain books
+- [Open Library](https://openlibrary.org/) for their comprehensive book database
+- [Gutendex](https://gutendex.com/) for the Gutenberg API
+- [Material Design 3](https://m3.material.io/) for the beautiful design system
 
 ---
 
