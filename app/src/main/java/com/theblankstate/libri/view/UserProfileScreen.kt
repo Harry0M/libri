@@ -26,6 +26,7 @@ fun UserProfileScreen(
     onEditPreferences: () -> Unit,
     onConnectOpenLibrary: () -> Unit,
     onLogout: () -> Unit,
+    onOpenSourceLicensesClick: () -> Unit,
     openLibraryViewModel: OpenLibraryViewModel
 ) {
     val context = LocalContext.current
@@ -274,6 +275,26 @@ fun UserProfileScreen(
                 )
                 
                 HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                // Open Source Licenses
+                ListItem(
+                    headlineContent = { Text("Open Source Licenses") },
+                    leadingContent = {
+                        Icon(
+                            Icons.Outlined.Code,
+                            contentDescription = null
+                        )
+                    },
+                    trailingContent = {
+                        Icon(
+                            Icons.Filled.ChevronRight,
+                            contentDescription = null
+                        )
+                    },
+                    modifier = Modifier.clickable { onOpenSourceLicensesClick() }
+                )
+                
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                 
                 // Privacy Policy
                 ListItem(
@@ -291,7 +312,7 @@ fun UserProfileScreen(
                         )
                     },
                     modifier = Modifier.clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://harry0m.github.io/Libri/PRIVACY_POLICY"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://libri.theblankstate.com/privacy"))
                         context.startActivity(intent)
                     }
                 )
@@ -314,7 +335,7 @@ fun UserProfileScreen(
                         )
                     },
                     modifier = Modifier.clickable {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://harry0m.github.io/Libri/TERMS_OF_SERVICE"))
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://libri.theblankstate.com/terms"))
                         context.startActivity(intent)
                     }
                 )

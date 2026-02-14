@@ -37,6 +37,7 @@ import com.theblankstate.libri.view.ProfileSetupScreen
 import com.theblankstate.libri.view.UserProfileScreen
 import com.theblankstate.libri.view.EditPreferencesScreen
 import com.theblankstate.libri.view.OpenLibraryLoginScreen
+import com.theblankstate.libri.view.OpenSourceLicensesScreen
 import com.theblankstate.libri.viewModel.AuthViewModel
 import com.theblankstate.libri.viewModel.OpenLibraryViewModel
 import com.theblankstate.libri.view.LibraryScreen
@@ -373,6 +374,9 @@ fun AppNavHost(
                         popUpTo(0) { inclusive = true }
                     }
                 },
+                onOpenSourceLicensesClick = {
+                    navController.navigate("openSourceLicenses")
+                },
                 openLibraryViewModel = openLibraryViewModel
             )
         }
@@ -384,6 +388,11 @@ fun AppNavHost(
                     navController.popBackStack()
                 },
                 viewModel = openLibraryViewModel
+            )
+        }
+        composable("openSourceLicenses") {
+            OpenSourceLicensesScreen(
+                onBackClick = { navController.popBackStack() }
             )
         }
         composable("editPreferences") {
