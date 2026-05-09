@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -32,6 +33,7 @@ import java.io.File
 import java.io.StringReader
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
+import androidx.compose.foundation.clickable
 
 /**
  * EPUB Reader Screen
@@ -144,7 +146,7 @@ fun EpubReaderScreen(
                         
                         val request = Request.Builder()
                             .url(downloadUrl)
-                            .header("User-Agent", "ScribeApp/1.0 (Android)")
+                            .header("User-Agent", "Libri/1.0 (Android)")
                             .build()
                         
                         client.newCall(request).execute().use { response ->
@@ -260,6 +262,10 @@ fun EpubReaderScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clickable {
+                                    currentChapterIndex = index
+                                    showTableOfContents = false
+                                }
                                 .background(
                                     if (index == currentChapterIndex) 
                                         MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
@@ -330,8 +336,8 @@ fun EpubReaderScreen(
     
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
+            LibriTopAppBar(
+                titleContent = {
                     Column {
                         Text(
                             text = title ?: "EPUB Reader",
@@ -348,14 +354,7 @@ fun EpubReaderScreen(
                         }
                     }
                 },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
+                onBackClick = onBackClick,
                 actions = {
                     // Table of Contents
                     IconButton(onClick = { showTableOfContents = true }) {

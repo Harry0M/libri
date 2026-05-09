@@ -390,7 +390,7 @@ fun LoginScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Your Internet Archive credentials are stored locally on your device using Android's private SharedPreferences. We do not collect or transmit your personal data to our servers.",
+                    text = "Internet Archive session data is stored on this device and sent only to Internet Archive pages used for login or reading. Google account data, library items, preferences, and terms acceptance may be stored with Firebase for your account.",
                     style = MaterialTheme.typography.bodyMedium
                 )
 

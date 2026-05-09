@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.theblankstate.libri.data.TermsRepository
 import com.theblankstate.libri.data.UserPreferencesRepository
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.OpenLibraryViewModel
 import com.theblankstate.libri.viewModel.OpenLibraryAuthState
 import kotlinx.coroutines.launch
@@ -65,13 +66,10 @@ fun OpenLibraryLoginScreen(
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Connect Open Library") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
+            LibriTopAppBar(
+                title = "Connect Open Library",
+                onBackClick = onBackClick,
+                centerTitle = true
             )
         }
     ) { padding ->
@@ -83,7 +81,7 @@ fun OpenLibraryLoginScreen(
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Open Library Logo/Icon
             Card(
@@ -330,7 +328,7 @@ fun OpenLibraryLoginScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "• We do not earn any profit from this app\n• We do not collect or transmit your personal data to our servers\n• We do not have access to your Open Library credentials",
+                    text = "• We do not earn any profit from this app\n• Your Open Library login is sent only to Open Library\n• We store the Open Library session locally so borrowing keeps working",
                     style = MaterialTheme.typography.bodyMedium
                 )
 
@@ -344,7 +342,7 @@ fun OpenLibraryLoginScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Your Open Library email and session information are stored using Android's SharedPreferences in private mode, accessible only by this app on your device. Your credentials remain on your device and are never transmitted to Libri's servers (we don't have any!).",
+                    text = "Your Open Library email, username, and session cookie are stored in encrypted app storage when available. Google account data, library items, preferences, and terms acceptance may be stored with Firebase for your account.",
                     style = MaterialTheme.typography.bodyMedium
                 )
 

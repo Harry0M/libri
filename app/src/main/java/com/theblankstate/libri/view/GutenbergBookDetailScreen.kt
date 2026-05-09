@@ -32,6 +32,7 @@ import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.datamodel.GutendexBook
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.GutenbergViewModel
 import kotlinx.coroutines.launch
 
@@ -136,13 +137,9 @@ fun GutenbergBookDetailScreen(
     
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Book Details") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
+            LibriTopAppBar(
+                title = "Book Details",
+                onBackClick = onBackClick,
                 actions = {
                     if (book != null && uid != null) {
                         IconButton(

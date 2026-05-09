@@ -202,11 +202,10 @@ class ShelvesRepository {
             }
         }
 
-        shelfBooksRef.child(uid).addValueEventListener(shelfBooksListener)
+        // Use single-value listener to avoid continuously downloading all shelf data
+        shelfBooksRef.child(uid).addListenerForSingleValueEvent(shelfBooksListener)
 
-        awaitClose {
-            shelfBooksRef.child(uid).removeEventListener(shelfBooksListener)
-        }
+        awaitClose { }
     }
 
     /**

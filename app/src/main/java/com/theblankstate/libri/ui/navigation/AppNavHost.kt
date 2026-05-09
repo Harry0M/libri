@@ -1,10 +1,24 @@
 package com.theblankstate.libri.ui.navigation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -21,6 +35,7 @@ import com.theblankstate.libri.view.EditionsListScreen
 import com.theblankstate.libri.view.HomeScreen
 import com.theblankstate.libri.view.OnboardingScreen
 import com.theblankstate.libri.view.PdfReaderScreen
+import com.theblankstate.libri.view.ReaderScreen
 import com.theblankstate.libri.view.EpubReaderScreen
 import com.theblankstate.libri.view.GutenbergBrowseScreen
 import com.theblankstate.libri.view.GutenbergBookDetailScreen
@@ -44,9 +59,8 @@ import com.theblankstate.libri.view.LibraryScreen
 import com.theblankstate.libri.view.LibraryBookDetailScreen
 import com.theblankstate.libri.view.components.BottomNavigationBar
 import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.fillMaxSize
+import com.theblankstate.libri.ui.theme.MotionTokens
 import com.theblankstate.libri.viewModel.LibraryViewModel
 import com.theblankstate.libri.data.LibraryRepository
 import com.theblankstate.libri.datamodel.BookFormat
@@ -57,7 +71,7 @@ fun AppNavHost(
 ) {
     val context = LocalContext.current
     val userPreferencesRepository = remember { UserPreferencesRepository(context) }
-    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+
     
     // Determine start destination based on Google login and onboarding status
     val googleUser = userPreferencesRepository.getGoogleUser()
@@ -68,8 +82,32 @@ fun AppNavHost(
     val navController = rememberNavController()
     val navBackStackEntry = navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry.value?.destination?.route
+    val currentTopLevelRoute = currentRoute?.substringBefore("/")
+    val topLevelRoutes = remember { setOf("home", "library", "search", "profile") }
+    val showBottomBar = currentTopLevelRoute in topLevelRoutes
+    val density = LocalDensity.current
+    val isImeVisible = WindowInsets.ime.getBottom(density) > 0
+    fun navigateTopLevel(route: String) {
+        navController.navigate(route) {
+            popUpTo("home") {
+                saveState = true
+                inclusive = false
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
 
-    NavHost(navController = navController, startDestination = "splash") {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        NavHost(
+            navController = navController,
+            startDestination = "splash",
+            modifier = Modifier.fillMaxSize()
+        ) {
         composable("splash") {
             SplashScreen(
                 onSplashFinished = {
@@ -113,6 +151,7 @@ fun AppNavHost(
             val openLibraryViewModel: OpenLibraryViewModel = viewModel()
             OpenLibraryLoginScreen(
                 onBackClick = {
+                    // Skip directly to onboarding when user skips Open Library connect
                     navController.navigate("onboarding") {
                         popUpTo("openLibraryConnect") { inclusive = true }
                     }
@@ -143,71 +182,33 @@ fun AppNavHost(
             )
         }
         composable("home") {
-            Scaffold(
-                bottomBar = {
-                    if (currentRoute == "home" || currentRoute == "library") {
-                        BottomNavigationBar(
-                            currentRoute = currentRoute ?: "home",
-                            onNavigate = { route ->
-                                navController.navigate(route) {
-                                    popUpTo("home") { inclusive = false }
-                                    launchSingleTop = true
-                                }
-                            }
-                        )
-                    }
+            HomeScreen(
+                onBookClick = { bookId ->
+                    val cleanId = bookId.substringAfterLast("/")
+                    viewModel.setSelectedBookById(cleanId)
+                    navController.navigate("detail/$cleanId")
+                },
+                onProfileClick = {
+                    navController.navigate("profile")
+                },
+                onFreeGutenbergBooksClick = {
+                    navController.navigate("gutenbergBrowse")
                 }
-            ) { paddingValues ->
-                Box(modifier = Modifier.padding(paddingValues)) {
-                    HomeScreen(
-                        onSearchClick = { navController.navigate("search") },
-                        onBookClick = { bookId ->
-                            val cleanId = bookId.substringAfterLast("/")
-                            viewModel.setSelectedBookById(cleanId)
-                            navController.navigate("detail/$cleanId")
-                        },
-                        onDownloadsClick = {
-                            navController.navigate("downloads")
-                        },
-                        onProfileClick = {
-                            navController.navigate("profile")
-                        },
-                        onFreeGutenbergBooksClick = {
-                            navController.navigate("gutenbergBrowse")
-                        }
-                    )
-                }
-            }
+            )
         }
         composable("library") {
-            val libraryViewModel: LibraryViewModel = viewModel()
+            val libraryViewModel: LibraryViewModel = viewModel(
+                factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
+                    context.applicationContext as android.app.Application
+                )
+            )
+            val openLibraryViewModel: OpenLibraryViewModel = viewModel(
+                factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
+                    context.applicationContext as android.app.Application
+                )
+            )
             
-            Scaffold(
-                bottomBar = {
-                    BottomNavigationBar(
-                        currentRoute = currentRoute ?: "library",
-                        onNavigate = { route ->
-                            navController.navigate(route) {
-                                popUpTo("home") { inclusive = false }
-                                launchSingleTop = true
-                            }
-                        }
-                    )
-                }
-            ) { paddingValues ->
-                Box(modifier = Modifier.padding(paddingValues)) {
-                    val context = LocalContext.current
-                    val libraryViewModel: com.theblankstate.libri.viewModel.LibraryViewModel = viewModel(
-                        factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
-                            context.applicationContext as android.app.Application
-                        )
-                    )
-                    val openLibraryViewModel: OpenLibraryViewModel = viewModel(
-                        factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
-                            context.applicationContext as android.app.Application
-                        )
-                    )
-                    LibraryScreen(
+            LibraryScreen(
                         onBookClick = { bookId ->
                             navController.navigate("libraryBookDetail/$bookId")
                         },
@@ -222,7 +223,7 @@ fun AppNavHost(
                             val encodedTitle = URLEncoder.encode(book.title, StandardCharsets.UTF_8.toString())
                             val encodedAuthor = URLEncoder.encode(book.author, StandardCharsets.UTF_8.toString())
                             val encodedCover = URLEncoder.encode(book.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                            val encodedFileUri = URLEncoder.encode(book.fileUri ?: "", StandardCharsets.UTF_8.toString())
+                            val encodedFileUri = URLEncoder.encode(book.fileUri.orEmpty(), StandardCharsets.UTF_8.toString())
                             when (book.format) {
                                 BookFormat.EPUB -> {
                                     navController.navigate("epubReader/${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
@@ -270,9 +271,7 @@ fun AppNavHost(
                             viewModel.setSelectedBookById(bookId)
                             navController.navigate("detail/$bookId")
                         }
-                    )
-                }
-            }
+            )
         }
         composable(
             route = "libraryBookDetail/{bookId}",
@@ -360,7 +359,7 @@ fun AppNavHost(
             val authViewModel: AuthViewModel = viewModel()
             val openLibraryViewModel: OpenLibraryViewModel = viewModel()
             UserProfileScreen(
-                onBackClick = { navController.popBackStack() },
+                onBackClick = { navigateTopLevel("home") },
                 onEditPreferences = {
                     navController.navigate("editPreferences")
                 },
@@ -440,19 +439,29 @@ fun AppNavHost(
             )
         ) {
             val bookId = it.arguments?.getString("bookId") ?: return@composable
-            val title = it.arguments?.getString("title")
-            val author = it.arguments?.getString("author")
-            val coverUrl = it.arguments?.getString("coverUrl")
+            val title = it.arguments?.getString("title")?.let { t -> URLDecoder.decode(t, StandardCharsets.UTF_8.toString()) }
+            val author = it.arguments?.getString("author")?.let { a -> URLDecoder.decode(a, StandardCharsets.UTF_8.toString()) }
+            val coverUrl = it.arguments?.getString("coverUrl")?.let { c -> URLDecoder.decode(c, StandardCharsets.UTF_8.toString()) }
             val fileUri = it.arguments?.getString("fileUri")
+                ?.let { f -> URLDecoder.decode(f, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { f -> f.isNotBlank() }
             
-            PdfReaderScreen(
-                bookId = bookId,
-                title = title,
-                author = author,
-                coverUrl = coverUrl,
-                fileUri = fileUri,
-                onBackClick = { navController.popBackStack() }
-            )
+            if (fileUri != null) {
+                PdfReaderScreen(
+                    bookId = bookId,
+                    title = title,
+                    author = author,
+                    coverUrl = coverUrl,
+                    fileUri = fileUri,
+                    onBackClick = { navController.popBackStack() }
+                )
+            } else {
+                ReaderScreen(
+                    bookId = bookId,
+                    title = title,
+                    onBackClick = { navController.popBackStack() }
+                )
+            }
         }
         // EPUB Reader route
         composable(
@@ -539,9 +548,7 @@ fun AppNavHost(
                     // Then use cleaned ID for navigation
                     val cleanId = bookId.substringAfterLast("/")
                     // Use launchSingleTop to reuse the detail screen instead of creating new instances
-                    navController.navigate("detail/$cleanId") {
-                        launchSingleTop = false
-                    }
+                    navController.navigate("detail/$cleanId")
                 },
                 onSeeAllEditionsClick = { workId ->
                     navController.navigate("editions/$workId")
@@ -642,6 +649,22 @@ fun AppNavHost(
                         navController.navigate("epubReader/gutenberg_${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&downloadUrl=$encodedDownloadUrl")
                     }
                 }
+            )
+        }
+        }
+        AnimatedVisibility(
+            visible = showBottomBar && !isImeVisible,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            enter = fadeIn(MotionTokens.springGentle()) +
+                slideInVertically(MotionTokens.springGentle()) { it / 2 } +
+                scaleIn(MotionTokens.springGentle(), initialScale = 0.96f),
+            exit = fadeOut(MotionTokens.springGentle()) +
+                slideOutVertically(MotionTokens.springGentle()) { it / 2 } +
+                scaleOut(MotionTokens.springGentle(), targetScale = 0.96f)
+        ) {
+            BottomNavigationBar(
+                currentRoute = currentTopLevelRoute ?: "home",
+                onNavigate = ::navigateTopLevel
             )
         }
     }

@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.theblankstate.libri.view.components.LibriTopAppBar
 
 data class OpenSourceLibrary(
     val name: String,
@@ -95,13 +96,9 @@ fun OpenSourceLicensesScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Open Source Licenses") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                }
+            LibriTopAppBar(
+                title = "Open Source Licenses",
+                onBackClick = onBackClick
             )
         }
     ) { paddingValues ->

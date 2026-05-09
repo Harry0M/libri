@@ -1,7 +1,11 @@
 package com.theblankstate.libri.viewModel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.SharedPreferences
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.theblankstate.libri.data.RecommendationSeeds
+import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.data_retrieval.repository
 import com.theblankstate.libri.datamodel.AdvancedSearchFilters
 import com.theblankstate.libri.datamodel.SortOption
@@ -12,9 +16,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
  
-class BookViewModel : ViewModel() {
+class BookViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val bookRepository = repository()
+    private val searchPrefs: SharedPreferences =
+        application.getSharedPreferences("search_history", android.content.Context.MODE_PRIVATE)
+
+    private val bookRepository = repository
+    private val userPreferencesRepository = UserPreferencesRepository(application)
 
     private val _bookState = MutableStateFlow<state>(state.loading)
     val bookState: StateFlow<state> = _bookState
@@ -59,14 +67,32 @@ class BookViewModel : ViewModel() {
     private val _advancedFilters = MutableStateFlow(AdvancedSearchFilters())
     val advancedFilters: StateFlow<AdvancedSearchFilters> = _advancedFilters
 
+    private val _searchRecommendations = MutableStateFlow(SearchRecommendationState())
+    val searchRecommendations: StateFlow<SearchRecommendationState> = _searchRecommendations
+
+    init {
+        // Load persisted search history
+        val saved = searchPrefs.getStringSet("history", emptySet()) ?: emptySet()
+        val ordered = searchPrefs.getString("history_ordered", null)
+        if (ordered != null) {
+            _searchHistory.value = ordered.split("\u001F").filter { it.isNotBlank() }
+        } else if (saved.isNotEmpty()) {
+            _searchHistory.value = saved.toList()
+        }
+    }
+
     fun addSearchHistoryItem(query: String) {
         if (query.isBlank()) return
         val currentHistory = _searchHistory.value.toMutableList()
-        if (currentHistory.contains(query)) {
-            currentHistory.remove(query)
-        }
+        currentHistory.remove(query)
         currentHistory.add(0, query)
-        _searchHistory.value = currentHistory
+        // Keep only last 20 items
+        val trimmed = currentHistory.take(20)
+        _searchHistory.value = trimmed
+        // Persist to disk (ordered using unit separator)
+        searchPrefs.edit()
+            .putString("history_ordered", trimmed.joinToString("\u001F"))
+            .apply()
     }
 
     fun fetchBooksByQuery(query: String) {
@@ -78,6 +104,76 @@ class BookViewModel : ViewModel() {
         currentOffset = 0
         canLoadMore = true
         fetchBooksInternal(query = currentQuery)
+    }
+
+    fun clearSearchResults() {
+        currentQuery = null
+        currentOffset = 0
+        canLoadMore = true
+        cachedBooks = emptyList()
+        _bookState.value = state.success(emptyList())
+    }
+
+    fun loadSearchRecommendations(force: Boolean = false) {
+        if (!force && (_searchRecommendations.value.openLibraryPicks.isNotEmpty() || _searchRecommendations.value.isLoading)) {
+            return
+        }
+
+        viewModelScope.launch {
+            _searchRecommendations.value = _searchRecommendations.value.copy(isLoading = true, error = null)
+            try {
+                val selectedGenres = userPreferencesRepository.getSelectedGenres().toList()
+                val selectedAuthors = userPreferencesRepository.getSelectedAuthors().toList()
+                val selectedLanguages = userPreferencesRepository.getSelectedLanguages().toList()
+                val preferredLanguage = RecommendationSeeds.preferredOpenLibraryLanguage(selectedLanguages)
+                val preferredGenre = selectedGenres.firstOrNull()
+                val preferredAuthor = selectedAuthors.firstOrNull()
+
+                val authorPicks = selectedAuthors.take(2).flatMap { author ->
+                    bookRepository.getbooks(
+                        author = author,
+                        lang = preferredLanguage?.twoLetter,
+                        limit = 8
+                    )
+                }
+                val genrePicks = selectedGenres.take(3).flatMap { genre ->
+                    bookRepository.getbooks(
+                        subject = RecommendationSeeds.normalizeTopic(genre),
+                        lang = preferredLanguage?.twoLetter,
+                        sort = "random",
+                        limit = 8
+                    )
+                }
+                val trendingPicks = bookRepository.getbooks(
+                    query = "trending_score_hourly_sum:[1 TO *]",
+                    lang = preferredLanguage?.twoLetter,
+                    sort = "trending",
+                    limit = 12
+                )
+                val books = (authorPicks + genrePicks + trendingPicks)
+                    .filter { it.title.isNotBlank() }
+                    .distinctBy { it.key ?: it.title }
+                    .take(12)
+
+                val topics = RecommendationSeeds.displayTopicsFromGenres(selectedGenres, limit = 10)
+
+                _searchRecommendations.value = SearchRecommendationState(
+                    openLibraryPicks = books,
+                    topics = topics,
+                    headline = when {
+                        preferredAuthor != null -> "Because you follow $preferredAuthor"
+                        preferredGenre != null -> "Because you like $preferredGenre"
+                        else -> "Trending on Open Library"
+                    },
+                    isLoading = false
+                )
+            } catch (e: Exception) {
+                _searchRecommendations.value = SearchRecommendationState(
+                    error = "Could not load recommendations.",
+                    isLoading = false
+                )
+            }
+        }
     }
 
     fun searchByAuthor(author: String) {
@@ -104,7 +200,17 @@ class BookViewModel : ViewModel() {
         viewModelScope.launch {
             _bookState.value = state.loading
             try {
-                val books = bookRepository.getbooks(query = query, author = author, subject = subject, limit = pageLimit, offset = 0)
+                val preferredLanguage = RecommendationSeeds.preferredOpenLibraryLanguage(
+                    userPreferencesRepository.getSelectedLanguages()
+                )
+                val books = bookRepository.getbooks(
+                    query = query,
+                    author = author,
+                    subject = subject,
+                    lang = preferredLanguage?.twoLetter,
+                    limit = pageLimit,
+                    offset = 0
+                )
                 cachedBooks = books
                 currentOffset = books.size
                 canLoadMore = books.size >= pageLimit
@@ -131,7 +237,15 @@ class BookViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val newOffset = currentOffset
-                val books = bookRepository.getbooks(query = query, limit = pageLimit, offset = newOffset)
+                val preferredLanguage = RecommendationSeeds.preferredOpenLibraryLanguage(
+                    userPreferencesRepository.getSelectedLanguages()
+                )
+                val books = bookRepository.getbooks(
+                    query = query,
+                    lang = preferredLanguage?.twoLetter,
+                    limit = pageLimit,
+                    offset = newOffset
+                )
                 if (books.isEmpty()) {
                     canLoadMore = false
                 } else {
@@ -162,6 +276,7 @@ class BookViewModel : ViewModel() {
                     isbn = filters.isbn,
                     publisher = filters.publisher,
                     language = if (filters.language == "und") null else filters.language,
+                    lang = preferredTwoLetterLanguage(filters.language),
                     sort = filters.sortBy.value.takeIf { it.isNotEmpty() }
                 )
                 cachedBooks = books
@@ -387,7 +502,10 @@ class BookViewModel : ViewModel() {
                 val similar = bookRepository.getbooks(
                     query = searchQuery,
                     author = preferredAuthor,
-                    subject = preferredGenre
+                    subject = preferredGenre,
+                    lang = RecommendationSeeds.preferredOpenLibraryLanguage(
+                        userPreferencesRepository.getSelectedLanguages()
+                    )?.twoLetter
                 )
                     .filter { normalizeKey(it.key) != normalizeKey(book.key) }
                     .take(12)
@@ -423,6 +541,25 @@ class BookViewModel : ViewModel() {
         if (!canLoadMoreEditions || _isLoadingMoreEditions.value) return
         loadEditions(workId, currentEditionsOffset)
     }
+
+    private fun preferredTwoLetterLanguage(searchCode: String?): String? {
+        return when (searchCode) {
+            "eng" -> "en"
+            "spa" -> "es"
+            "fre" -> "fr"
+            "ger" -> "de"
+            "ita" -> "it"
+            "por" -> "pt"
+            "rus" -> "ru"
+            "jpn" -> "ja"
+            "chi" -> "zh"
+            "ara" -> "ar"
+            "hin" -> "hi"
+            else -> RecommendationSeeds.preferredOpenLibraryLanguage(
+                userPreferencesRepository.getSelectedLanguages()
+            )?.twoLetter
+        }
+    }
 }
 
 
@@ -434,4 +571,12 @@ data class FilterState(
     val selectedLanguage: String? = null,
     val selectedYearStart: Int? = null,
     val selectedYearEnd: Int? = null
+)
+
+data class SearchRecommendationState(
+    val openLibraryPicks: List<bookModel> = emptyList(),
+    val topics: List<String> = emptyList(),
+    val headline: String = "Recommended for you",
+    val isLoading: Boolean = false,
+    val error: String? = null
 )

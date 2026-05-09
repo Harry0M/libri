@@ -22,6 +22,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.theblankstate.libri.datamodel.DownloadedBook
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.DownloadsViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,13 +40,9 @@ fun DownloadsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Downloads") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                }
+            LibriTopAppBar(
+                title = "Downloads",
+                onBackClick = onBackClick
             )
         }
     ) { padding ->

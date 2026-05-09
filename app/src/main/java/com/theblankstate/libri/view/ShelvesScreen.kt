@@ -25,6 +25,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.theblankstate.libri.datamodel.Shelf
 import com.theblankstate.libri.view.components.CreateShelfDialog
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.ShelvesUiState
 import com.theblankstate.libri.viewModel.ShelvesViewModel
 import kotlinx.coroutines.launch
@@ -62,13 +63,9 @@ fun ShelvesScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("My Shelves") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                }
+            LibriTopAppBar(
+                title = "My Shelves",
+                onBackClick = onBackClick
             )
         },
         floatingActionButton = {

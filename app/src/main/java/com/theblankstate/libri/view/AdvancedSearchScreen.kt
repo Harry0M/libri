@@ -8,11 +8,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.theblankstate.libri.data.RecommendationSeeds
+import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.datamodel.AdvancedSearchFilters
 import com.theblankstate.libri.datamodel.Languages
 import com.theblankstate.libri.datamodel.SortOption
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.BookViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -22,33 +26,27 @@ fun AdvancedSearchScreen(
     onBackClick: () -> Unit,
     onSearchComplete: () -> Unit
 ) {
+    val context = LocalContext.current
+    val preferredLanguage = remember(context) {
+        val repository = UserPreferencesRepository(context)
+        RecommendationSeeds.preferredOpenLibraryLanguage(repository.getSelectedLanguages())?.searchCode ?: "und"
+    }
     var query by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
     var author by remember { mutableStateOf("") }
     var subject by remember { mutableStateOf("") }
     var isbn by remember { mutableStateOf("") }
     var publisher by remember { mutableStateOf("") }
-    var selectedLanguage by remember { mutableStateOf("und") }
+    var selectedLanguage by remember { mutableStateOf(preferredLanguage) }
     var selectedSort by remember { mutableStateOf(SortOption.RELEVANCE) }
     var languageExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Advanced Search") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
-                )
+            LibriTopAppBar(
+                title = "Advanced Search",
+                onBackClick = onBackClick
             )
         }
     ) { paddingValues ->
@@ -61,8 +59,6 @@ fun AdvancedSearchScreen(
                 .padding(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
-
             // Search Fields Section
             ElevatedCard(
                 modifier = Modifier.fillMaxWidth(),

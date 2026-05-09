@@ -10,6 +10,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.theblankstate.libri.data.OnboardingData
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.EditPreferencesViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,13 +32,9 @@ fun EditPreferencesScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Edit Preferences") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                }
+            LibriTopAppBar(
+                title = "Edit Preferences",
+                onBackClick = onBackClick
             )
         },
         bottomBar = {

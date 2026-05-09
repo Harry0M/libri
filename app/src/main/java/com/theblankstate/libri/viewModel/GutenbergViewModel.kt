@@ -6,6 +6,8 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.theblankstate.libri.data.RecommendationSeeds
+import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.data_retrieval.retrofitinatance
 import com.theblankstate.libri.data_retrieval.DownloadsRepository
 import com.theblankstate.libri.data_retrieval.DownloadNotificationManager
@@ -39,6 +41,7 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
     
     private val context = application.applicationContext
     private val gutendexApi = retrofitinatance.gutendexApi
+    private val userPreferencesRepository = UserPreferencesRepository(application)
     private val downloadsRepository = DownloadsRepository(application)
     private val notificationManager = DownloadNotificationManager(application)
     
@@ -63,6 +66,9 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
     // Popular books
     private val _popularBooks = MutableStateFlow<List<GutendexBook>>(emptyList())
     val popularBooks: StateFlow<List<GutendexBook>> = _popularBooks.asStateFlow()
+
+    private val _recommendationState = MutableStateFlow(GutenbergRecommendationState())
+    val recommendationState: StateFlow<GutenbergRecommendationState> = _recommendationState.asStateFlow()
     
     private val _isLoadingPopular = MutableStateFlow(false)
     val isLoadingPopular: StateFlow<Boolean> = _isLoadingPopular.asStateFlow()
@@ -103,6 +109,7 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
     private val _hasMoreSearchResults = MutableStateFlow(true)
     val hasMoreSearchResults: StateFlow<Boolean> = _hasMoreSearchResults.asStateFlow()
     private var currentSearchQuery: String? = null
+    private var currentSearchLanguage: String? = null
     
     // Pagination for popular books
     private var popularNextPageUrl: String? = null
@@ -118,11 +125,12 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Search for books on Project Gutenberg
      */
-    fun searchBooks(query: String, language: String? = "en") {
+    fun searchBooks(query: String, language: String? = null) {
         Log.d("GutenbergViewModel", "searchBooks called for query: $query")
         if (query.isBlank()) return
         
         currentSearchQuery = query
+        currentSearchLanguage = language
         currentPage = 1
         hasMoreResults = true
         _hasMoreSearchResults.value = true
@@ -196,7 +204,7 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
      * Retry last search
      */
     fun retrySearch() {
-        currentSearchQuery?.let { searchBooks(it) }
+        currentSearchQuery?.let { searchBooks(it, currentSearchLanguage) }
     }
     
     /**
@@ -212,7 +220,7 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                 val response = withContext(Dispatchers.IO) {
                     gutendexApi.searchBooks(
                         search = currentSearchQuery,
-                        languages = "en",
+                        languages = currentSearchLanguage,
                         page = currentPage
                     )
                 }
@@ -237,20 +245,75 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Load popular books from Project Gutenberg
      */
-    fun loadPopularBooks(language: String? = "en") {
+    fun loadPopularBooks(language: String? = null) {
         viewModelScope.launch {
             _isLoadingPopular.value = true
             
             try {
-                val response = gutendexApi.getPopularBooks(
-                    languages = language
-                )
-                _popularBooks.value = response.results
-                popularNextPageUrl = response.next
+                val preferredLanguage = language ?: preferredGutendexLanguage()
+                val response = gutendexApi.getPopularBooks(languages = preferredLanguage)
+                val resolvedResponse = if (response.results.size < 6 && preferredLanguage != null) {
+                    gutendexApi.getPopularBooks(languages = null)
+                } else {
+                    response
+                }
+                _popularBooks.value = response.results.ifEmpty { resolvedResponse.results }
+                    .ifTooSmallThen(resolvedResponse.results)
+                popularNextPageUrl = resolvedResponse.next ?: response.next
             } catch (e: Exception) {
                 // Silently fail, keep existing data
             } finally {
                 _isLoadingPopular.value = false
+            }
+        }
+    }
+
+    fun loadRecommendedBooks(force: Boolean = false) {
+        if (!force && (_recommendationState.value.books.isNotEmpty() || _recommendationState.value.isLoading)) {
+            return
+        }
+
+        viewModelScope.launch {
+            val selectedGenres = userPreferencesRepository.getSelectedGenres().toList()
+            val selectedLanguages = userPreferencesRepository.getSelectedLanguages().toList()
+            val language = preferredGutendexLanguage()
+            val topic = RecommendationSeeds.topicsFromGenres(selectedGenres, limit = 1).firstOrNull()
+
+            _recommendationState.value = GutenbergRecommendationState(
+                headline = RecommendationSeeds.gutenbergHeadline(selectedGenres, selectedLanguages),
+                subtitle = RecommendationSeeds.gutenbergSubtitle(selectedGenres, selectedLanguages),
+                isLoading = true
+            )
+
+            try {
+                val response = if (topic != null) {
+                    gutendexApi.getBooksByTopic(topic = topic, languages = language)
+                } else {
+                    gutendexApi.getPopularBooks(languages = language)
+                }
+                val fallback = if (response.results.size < 6 && language != null) {
+                    if (topic != null) {
+                        gutendexApi.getBooksByTopic(topic = topic, languages = null)
+                    } else {
+                        gutendexApi.getPopularBooks(languages = null)
+                    }
+                } else {
+                    response
+                }
+
+                _recommendationState.value = GutenbergRecommendationState(
+                    books = response.results.ifTooSmallThen(fallback.results),
+                    headline = RecommendationSeeds.gutenbergHeadline(selectedGenres, selectedLanguages),
+                    subtitle = RecommendationSeeds.gutenbergSubtitle(selectedGenres, selectedLanguages),
+                    isLoading = false
+                )
+            } catch (e: Exception) {
+                _recommendationState.value = GutenbergRecommendationState(
+                    headline = RecommendationSeeds.gutenbergHeadline(selectedGenres, selectedLanguages),
+                    subtitle = RecommendationSeeds.gutenbergSubtitle(selectedGenres, selectedLanguages),
+                    isLoading = false,
+                    error = "Could not load Gutenberg recommendations."
+                )
             }
         }
     }
@@ -285,15 +348,22 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
     /**
      * Load books by topic/genre
      */
-    suspend fun getBooksByTopic(topic: String, language: String? = "en"): List<GutendexBook> {
+    suspend fun getBooksByTopic(topic: String, language: String? = null): List<GutendexBook> {
         currentTopic = topic
         return try {
+            val resolvedLanguage = language ?: preferredGutendexLanguage()
             val response = gutendexApi.getBooksByTopic(
                 topic = topic,
-                languages = language
+                languages = resolvedLanguage
             )
             topicNextPageUrl = response.next
-            response.results
+            if (response.results.size < 6 && resolvedLanguage != null) {
+                val fallback = gutendexApi.getBooksByTopic(topic = topic, languages = null)
+                topicNextPageUrl = fallback.next ?: response.next
+                response.results.ifTooSmallThen(fallback.results)
+            } else {
+                response.results
+            }
         } catch (e: Exception) {
             topicNextPageUrl = null
             emptyList()
@@ -347,9 +417,20 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
         _searchResults.value = emptyList()
         _searchError.value = null
         currentSearchQuery = null
+        currentSearchLanguage = null
         currentPage = 1
         hasMoreResults = true
         _hasMoreSearchResults.value = true
+    }
+
+    private fun preferredGutendexLanguage(): String? {
+        return RecommendationSeeds.preferredGutendexLanguage(
+            userPreferencesRepository.getSelectedLanguages()
+        )
+    }
+
+    private fun List<GutendexBook>.ifTooSmallThen(fallback: List<GutendexBook>): List<GutendexBook> {
+        return if (size >= 6) this else (this + fallback).distinctBy { it.id }
     }
     
     /**
@@ -388,10 +469,6 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                 val downloadedBook = downloadFile(book, downloadUrl, format)
                 
                 if (downloadedBook != null) {
-                    // Mark completed to avoid late progress updates showing after completion
-                    _downloadingBookIds.value = _downloadingBookIds.value - book.id
-                    _downloadProgress.value = _downloadProgress.value - book.id
-
                     // Show completion notification
                     notificationManager.showDownloadComplete(book.id, book.title)
                     withContext(Dispatchers.Main) {
@@ -407,12 +484,8 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Download was cancelled
-                _downloadingBookIds.value = _downloadingBookIds.value - book.id
-                _downloadProgress.value = _downloadProgress.value - book.id
                 notificationManager.showDownloadCancelled(book.id, book.title)
             } catch (e: Exception) {
-                _downloadingBookIds.value = _downloadingBookIds.value - book.id
-                _downloadProgress.value = _downloadProgress.value - book.id
                 notificationManager.showDownloadFailed(book.id, book.title, e.message)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(context, "Download failed: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -451,7 +524,7 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
         try {
             val request = Request.Builder()
                 .url(downloadUrl)
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
             
             httpClient.newCall(request).execute().use { response ->
@@ -539,9 +612,7 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
      * Check if a book is already downloaded
      */
     fun isBookDownloaded(gutenbergId: Int): Boolean {
-        return downloadsRepository.getDownloadedBooks().any { 
-            it.gutenbergId == gutenbergId 
-        }
+        return downloadsRepository.isGutenbergBookDownloaded(gutenbergId)
     }
     
     /**
@@ -589,3 +660,11 @@ object GutenbergTopics {
         "Travel" to "travel"
     )
 }
+
+data class GutenbergRecommendationState(
+    val books: List<GutendexBook> = emptyList(),
+    val headline: String = "Popular free reads",
+    val subtitle: String = "Project Gutenberg popular public-domain books",
+    val isLoading: Boolean = false,
+    val error: String? = null
+)

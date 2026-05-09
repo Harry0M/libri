@@ -27,7 +27,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.snapshotFlow
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.theblankstate.libri.data.RecommendationSeeds
+import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.datamodel.GutendexBook
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.GutenbergViewModel
 import com.theblankstate.libri.viewModel.GutenbergTopics
 
@@ -48,6 +51,7 @@ fun GutenbergBrowseScreen(
 ) {
     val popularBooks by viewModel.popularBooks.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
+    val recommendations by viewModel.recommendationState.collectAsState()
     val isSearching by viewModel.isSearching.collectAsState()
     val isLoadingPopular by viewModel.isLoadingPopular.collectAsState()
     val searchError by viewModel.searchError.collectAsState()
@@ -61,9 +65,19 @@ fun GutenbergBrowseScreen(
     var isLoadingTopic by remember { mutableStateOf(false) }
     val isLoadingMoreTopic by viewModel.isLoadingMoreTopic.collectAsState()
     val isLoadingMorePopular by viewModel.isLoadingMorePopular.collectAsState()
+    val context = LocalContext.current
+    val userPreferencesRepository = remember(context) { UserPreferencesRepository(context) }
+    val preferredTopicPairs = remember(userPreferencesRepository) {
+        userPreferencesRepository.getSelectedGenres()
+            .map { genre -> genre to RecommendationSeeds.normalizeTopic(genre) }
+    }
+    val browseTopics = remember(preferredTopicPairs) {
+        (preferredTopicPairs + GutenbergTopics.topics).distinctBy { it.second }
+    }
     
     // Load popular books on first launch
     LaunchedEffect(Unit) {
+        viewModel.loadRecommendedBooks()
         viewModel.loadPopularBooks()
     }
     
@@ -86,8 +100,8 @@ fun GutenbergBrowseScreen(
     
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { 
+            LibriTopAppBar(
+                titleContent = {
                     if (isSearchMode) {
                         OutlinedTextField(
                             value = searchQuery,
@@ -124,19 +138,15 @@ fun GutenbergBrowseScreen(
                         Text("Free Ebooks") 
                     }
                 },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (isSearchMode) {
-                            isSearchMode = false
-                            searchQuery = ""
-                            viewModel.clearSearch()
-                        } else if (selectedTopic != null) {
-                            selectedTopic = null
-                        } else {
-                            onBackClick()
-                        }
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                onBackClick = {
+                    if (isSearchMode) {
+                        isSearchMode = false
+                        searchQuery = ""
+                        viewModel.clearSearch()
+                    } else if (selectedTopic != null) {
+                        selectedTopic = null
+                    } else {
+                        onBackClick()
                     }
                 },
                 actions = {
@@ -351,7 +361,7 @@ fun GutenbergBrowseScreen(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(GutenbergTopics.topics) { (name, topic) ->
+                                items(browseTopics) { (name, topic) ->
                                     FilterChip(
                                         selected = false,
                                         onClick = { selectedTopic = topic },
@@ -364,6 +374,55 @@ fun GutenbergBrowseScreen(
                                             )
                                         }
                                     )
+                                }
+                            }
+                        }
+
+                        item {
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Text(
+                                text = recommendations.headline,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+                            Text(
+                                text = recommendations.subtitle,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        item {
+                            when {
+                                recommendations.isLoading -> {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(180.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator()
+                                    }
+                                }
+                                recommendations.books.isNotEmpty() -> {
+                                    LazyRow(
+                                        contentPadding = PaddingValues(horizontal = 16.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                    ) {
+                                        items(recommendations.books.take(12)) { book ->
+                                            GutenbergBookCard(
+                                                book = book,
+                                                onClick = { onBookClick(book) },
+                                                onDownloadClick = { viewModel.downloadBook(book) },
+                                                onReadClick = { onReadBook(book) },
+                                                isDownloading = downloadingBookIds.contains(book.id),
+                                                downloadProgress = downloadProgress[book.id] ?: 0f,
+                                                isDownloaded = viewModel.isBookDownloaded(book.id)
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }

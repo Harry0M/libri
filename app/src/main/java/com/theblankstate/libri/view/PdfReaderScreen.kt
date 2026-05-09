@@ -37,6 +37,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import com.theblankstate.libri.view.components.LibriTopAppBar
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -197,22 +198,9 @@ fun PdfReaderScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = title ?: "Reader",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
-                    }
-                },
+            LibriTopAppBar(
+                title = title ?: "Reader",
+                onBackClick = onBackClick,
                 actions = {
                     // Bookmarks List
                     IconButton(onClick = { showBookmarksDialog = true }) {

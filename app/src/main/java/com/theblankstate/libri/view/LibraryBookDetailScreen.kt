@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.view.components.TopBarActionButton
 import coil.compose.AsyncImage
 import com.theblankstate.libri.datamodel.BookFormat
@@ -140,19 +141,9 @@ fun LibraryBookDetailScreen(
 
         Scaffold(
             topBar = {
-                TopAppBar(
-                    title = { },
-                    navigationIcon = {
-                        FilledIconButton(
-                            onClick = onBackClick,
-                            modifier = Modifier.padding(8.dp),
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-                            )
-                        ) {
-                            Icon(Icons.Default.ArrowBack, "Back")
-                        }
-                    },
+                LibriTopAppBar(
+                    title = "",
+                    onBackClick = onBackClick,
                     actions = {
                         // Details (scroll to section)
                         TopBarActionButton(
@@ -266,10 +257,7 @@ fun LibraryBookDetailScreen(
                             ) {
                                 Icon(Icons.Default.Delete, "Remove from Library")
                             }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent
-                    )
+                    }
                 )
             },
             containerColor = Color.Transparent
@@ -284,7 +272,7 @@ fun LibraryBookDetailScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 16.dp),
+                        .padding(top = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     // Elevated Book Cover with Shadow
@@ -1227,7 +1215,8 @@ fun LibraryBookDetailScreen(
 
         // Borrow Dialog
         if (showBorrowDialog) {
-            val borrowKey = book.openLibraryId?.substringAfterLast("/")
+            val borrowKey = book.openLibraryId
+                ?: book.internetArchiveId?.takeIf { it.isNotBlank() }?.let { "https://archive.org/details/$it" }
             AlertDialog(
                 onDismissRequest = { showBorrowDialog = false },
                 shape = RoundedCornerShape(24.dp),

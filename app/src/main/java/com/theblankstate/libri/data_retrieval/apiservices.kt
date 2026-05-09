@@ -21,6 +21,7 @@ interface apiservices {
         @Query("isbn") isbn: String? = null,
         @Query("publisher") publisher: String? = null,
         @Query("language") language: String? = null,
+        @Query("lang") lang: String? = null,
         @Query("sort") sort: String? = null,
         @Query("limit") limit: Int = 20,
         @Query("offset") offset: Int = 0

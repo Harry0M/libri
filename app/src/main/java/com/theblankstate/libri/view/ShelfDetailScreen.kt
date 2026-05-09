@@ -48,6 +48,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.theblankstate.libri.datamodel.LibraryBook
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.ShelfDetailUiState
 import com.theblankstate.libri.viewModel.ShelvesViewModel
 import kotlinx.coroutines.launch
@@ -81,19 +82,12 @@ fun ShelfDetailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    when (val state = uiState) {
-                        is ShelfDetailUiState.Success -> Text(state.shelf.name)
-                        else -> Text("Shelf")
-                    }
+            LibriTopAppBar(
+                title = when (val state = uiState) {
+                    is ShelfDetailUiState.Success -> state.shelf.name
+                    else -> "Shelf"
                 },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                }
-                ,
+                onBackClick = onBackClick,
                 actions = {
                     // Delete shelf action
                     IconButton(onClick = { showDeleteDialog = true }) {

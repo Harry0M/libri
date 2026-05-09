@@ -24,7 +24,7 @@ fun AddToLibraryDialog(
     onCreateNewShelf: () -> Unit,
     bookTitle: String
 ) {
-    var selectedStatus by remember { mutableStateOf<ReadingStatus?>(null) }
+    var selectedStatus by remember { mutableStateOf<ReadingStatus?>(ReadingStatus.WANT_TO_READ) }
     var selectedShelfIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     AlertDialog(
@@ -52,7 +52,7 @@ fun AddToLibraryDialog(
                 // Reading Status Section
                 item {
                     Text(
-                        "Reading Status (Optional)",
+                        "Reading Status",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.padding(bottom = 8.dp)
@@ -206,7 +206,7 @@ fun AddToLibraryDialog(
                 item {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        "* At least one selection required",
+                        "Shelves are optional. Books default to Want to Read.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -217,8 +217,7 @@ fun AddToLibraryDialog(
             Button(
                 onClick = {
                     onConfirm(selectedStatus, selectedShelfIds.toList())
-                },
-                enabled = selectedStatus != null || selectedShelfIds.isNotEmpty()
+                }
             ) {
                 Text("Add")
             }

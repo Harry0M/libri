@@ -68,7 +68,9 @@ fun GoogleLoginScreen(
     }
 
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding(),
         color = MaterialTheme.colorScheme.background
     ) {
         Column(
@@ -294,7 +296,7 @@ fun GoogleLoginScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "We do not collect or transmit your personal data to our servers. All your data is stored locally on your device.",
+                    text = "Google sign-in, profile, library, preferences, and terms acceptance may be stored with Firebase for your account. Provider login sessions are stored on this device and used only for Open Library or Internet Archive flows.",
                     style = MaterialTheme.typography.bodyMedium
                 )
 

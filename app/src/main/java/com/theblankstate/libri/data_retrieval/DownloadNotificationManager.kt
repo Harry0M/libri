@@ -19,7 +19,7 @@ class DownloadNotificationManager(private val context: Context) {
         const val CHANNEL_ID = "download_channel"
         const val CHANNEL_NAME = "Downloads"
         const val CHANNEL_DESCRIPTION = "Book download notifications"
-        const val ACTION_CANCEL_DOWNLOAD = "com.example.learncompose.CANCEL_DOWNLOAD"
+        const val ACTION_CANCEL_DOWNLOAD = "com.theblankstate.libri.CANCEL_DOWNLOAD"
         const val EXTRA_BOOK_ID = "book_id"
     }
     

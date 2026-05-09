@@ -2,6 +2,9 @@ package com.theblankstate.libri.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKeys
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 
@@ -9,6 +12,23 @@ class UserPreferencesRepository(context: Context) {
 
     private val sharedPreferences: SharedPreferences =
         context.getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+    
+    // Encrypted storage for sensitive session data (cookies, tokens)
+    private val securePreferences: SharedPreferences = try {
+        val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
+        EncryptedSharedPreferences.create(
+            "secure_user_prefs",
+            masterKeyAlias,
+            context,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (e: Exception) {
+        // Fallback to regular SharedPreferences if encryption fails (e.g., old devices)
+        Log.w("UserPreferencesRepository", "EncryptedSharedPreferences unavailable, falling back to regular", e)
+        context.getSharedPreferences("secure_user_prefs_fallback", Context.MODE_PRIVATE)
+    }
+    
     private val gson = Gson()
 
     companion object {
@@ -30,15 +50,15 @@ class UserPreferencesRepository(context: Context) {
 
     fun saveIASession(email: String, cookies: Map<String, String>) {
         val json = gson.toJson(cookies)
-        sharedPreferences.edit()
+        securePreferences.edit()
             .putString(KEY_IA_EMAIL, email)
             .putString(KEY_IA_COOKIES, json)
             .apply()
     }
 
     fun getIASession(): Pair<String?, Map<String, String>?> {
-        val email = sharedPreferences.getString(KEY_IA_EMAIL, null)
-        val json = sharedPreferences.getString(KEY_IA_COOKIES, null)
+        val email = securePreferences.getString(KEY_IA_EMAIL, null)
+        val json = securePreferences.getString(KEY_IA_COOKIES, null)
         val cookies = if (json != null) {
             val type = object : TypeToken<Map<String, String>>() {}.type
             gson.fromJson<Map<String, String>>(json, type)
@@ -49,7 +69,7 @@ class UserPreferencesRepository(context: Context) {
     }
 
     fun clearIASession() {
-        sharedPreferences.edit()
+        securePreferences.edit()
             .remove(KEY_IA_EMAIL)
             .remove(KEY_IA_COOKIES)
             .apply()
@@ -127,9 +147,9 @@ class UserPreferencesRepository(context: Context) {
         return gson.fromJson(json, type)
     }
 
-    // Open Library Session Management
+    // Open Library Session Management (encrypted storage)
     fun saveOpenLibrarySession(email: String, username: String, sessionCookie: String) {
-        sharedPreferences.edit()
+        securePreferences.edit()
             .putString(KEY_OL_EMAIL, email)
             .putString(KEY_OL_USERNAME, username)
             .putString(KEY_OL_SESSION, sessionCookie)
@@ -137,22 +157,22 @@ class UserPreferencesRepository(context: Context) {
     }
 
     fun getOpenLibrarySession(): Triple<String?, String?, String?> {
-        val email = sharedPreferences.getString(KEY_OL_EMAIL, null)
-        val username = sharedPreferences.getString(KEY_OL_USERNAME, null)
-        val session = sharedPreferences.getString(KEY_OL_SESSION, null)
+        val email = securePreferences.getString(KEY_OL_EMAIL, null)
+        val username = securePreferences.getString(KEY_OL_USERNAME, null)
+        val session = securePreferences.getString(KEY_OL_SESSION, null)
         return Triple(email, username, session)
     }
 
     fun getOpenLibraryUsername(): String? {
-        return sharedPreferences.getString(KEY_OL_USERNAME, null)
+        return securePreferences.getString(KEY_OL_USERNAME, null)
     }
 
     fun isOpenLibraryLoggedIn(): Boolean {
-        return sharedPreferences.getString(KEY_OL_SESSION, null) != null
+        return securePreferences.getString(KEY_OL_SESSION, null) != null
     }
 
     fun clearOpenLibrarySession() {
-        sharedPreferences.edit()
+        securePreferences.edit()
             .remove(KEY_OL_EMAIL)
             .remove(KEY_OL_USERNAME)
             .remove(KEY_OL_SESSION)

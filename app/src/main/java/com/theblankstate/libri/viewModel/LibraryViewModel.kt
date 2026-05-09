@@ -30,6 +30,8 @@ import com.theblankstate.libri.datamodel.ReadingStatus
 import com.theblankstate.libri.datamodel.BookFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -57,7 +59,7 @@ enum class SortOption(val displayName: String) {
 class LibraryViewModel(application: Application) : AndroidViewModel(application) {
     private val libraryRepository = LibraryRepository()
     private val shelvesRepository = ShelvesRepository()
-    private val apiRepository = repository()
+    private val apiRepository = repository
     private val downloadsRepository = DownloadsRepository(application)
     private val context = application.applicationContext
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -70,11 +72,8 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     companion object {
         private const val DOWNLOAD_CHANNEL_ID = "download_channel"
         private const val BASE_NOTIFICATION_ID = 1001
-        const val ACTION_CANCEL_DOWNLOAD = "com.example.learncompose.CANCEL_DOWNLOAD"
+        const val ACTION_CANCEL_DOWNLOAD = "com.theblankstate.libri.CANCEL_DOWNLOAD"
         const val EXTRA_BOOK_ID = "book_id"
-        
-        // Static reference for broadcast receiver to access
-        private var instance: LibraryViewModel? = null
     }
     
     // Track notification IDs per book
@@ -99,7 +98,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     
     init {
         createNotificationChannel()
-        instance = this
         
         // Register broadcast receiver for cancel actions
         ContextCompat.registerReceiver(
@@ -115,7 +113,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     
     override fun onCleared() {
         super.onCleared()
-        instance = null
         // Unregister broadcast receiver
         try {
             context.unregisterReceiver(downloadCancelReceiver)
@@ -145,11 +142,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         // Show cancelled toast
         Toast.makeText(context, "Download cancelled", Toast.LENGTH_SHORT).show()
     }
-    
-    // Static method for broadcast receiver
-    fun cancelDownloadStatic(bookId: String) {
-        instance?.cancelDownload(bookId)
-    }
+
     
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -521,30 +514,40 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     
                     if (!workId.isNullOrBlank()) {
                         try {
-                            // Fetch Work Details for Description
-                            val workDetails = apiRepository.getWorkDetails(workId)
-                            workDetails?.getDescriptionText()?.let { fullDesc ->
-                                if (fullDesc.isNotBlank()) {
-                                    description = fullDesc
-                                }
-                            }
+                            // Fetch Work Details and Editions in parallel
+                            val needEditions = isbn == null || publisher == null || totalPages == 0
                             
-                            // Fetch Editions for ISBN, Publisher, Pages if missing
-                            if (isbn == null || publisher == null || totalPages == 0) {
-                                val editions = apiRepository.getEditions(workId)
-                                val bestEdition = editions.firstOrNull { !it.isbn13.isNullOrEmpty() } 
-                                    ?: editions.firstOrNull { !it.isbn10.isNullOrEmpty() }
-                                    ?: editions.firstOrNull()
+                            coroutineScope {
+                                val workDetailsDeferred = async {
+                                    apiRepository.getWorkDetails(workId)
+                                }
+                                val editionsDeferred = if (needEditions) {
+                                    async { apiRepository.getEditions(workId) }
+                                } else null
                                 
-                                if (bestEdition != null) {
-                                    if (isbn == null) {
-                                        isbn = bestEdition.isbn13?.firstOrNull() ?: bestEdition.isbn10?.firstOrNull()
+                                val workDetails = workDetailsDeferred.await()
+                                workDetails?.getDescriptionText()?.let { fullDesc ->
+                                    if (fullDesc.isNotBlank()) {
+                                        description = fullDesc
                                     }
-                                    if (publisher == null) {
-                                        publisher = bestEdition.publishers?.firstOrNull()
-                                    }
-                                    if (totalPages == 0) {
-                                        totalPages = bestEdition.numberOfPages ?: 0
+                                }
+                                
+                                if (needEditions) {
+                                    val editions = editionsDeferred?.await() ?: emptyList()
+                                    val bestEdition = editions.firstOrNull { !it.isbn13.isNullOrEmpty() } 
+                                        ?: editions.firstOrNull { !it.isbn10.isNullOrEmpty() }
+                                        ?: editions.firstOrNull()
+                                    
+                                    if (bestEdition != null) {
+                                        if (isbn == null) {
+                                            isbn = bestEdition.isbn13?.firstOrNull() ?: bestEdition.isbn10?.firstOrNull()
+                                        }
+                                        if (publisher == null) {
+                                            publisher = bestEdition.publishers?.firstOrNull()
+                                        }
+                                        if (totalPages == 0) {
+                                            totalPages = bestEdition.numberOfPages ?: 0
+                                        }
                                     }
                                 }
                             }
@@ -747,8 +750,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         }
 
                         withContext(Dispatchers.Main) {
-                            _downloadingBookIds.value = _downloadingBookIds.value - book.id
-                            _downloadProgressMap.value = _downloadProgressMap.value - book.id
                             showDownloadCompleteNotification(book.id, book.title)
                             Toast.makeText(context, "Download complete: ${book.title}", Toast.LENGTH_SHORT).show()
                             onSuccess()
@@ -764,8 +765,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 } catch (e: Exception) {
                     val errorMsg = e.message ?: "Unknown error occurred"
                     withContext(Dispatchers.Main) {
-                        _downloadingBookIds.value = _downloadingBookIds.value - book.id
-                        _downloadProgressMap.value = _downloadProgressMap.value - book.id
                         showDownloadFailedNotification(book.id, book.title, errorMsg)
                         Toast.makeText(context, "Download failed: $errorMsg", Toast.LENGTH_LONG).show()
                         onError(errorMsg)
@@ -841,9 +840,6 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     }
                     
                     withContext(Dispatchers.Main) {
-                        // Mark completed to avoid late progress updates
-                        _downloadingBookIds.value = _downloadingBookIds.value - book.id
-                        _downloadProgressMap.value = _downloadProgressMap.value - book.id
                         showDownloadCompleteNotification(book.id, book.title)
                         Toast.makeText(context, "Download complete: ${book.title}", Toast.LENGTH_SHORT).show()
                         onSuccess()
@@ -859,15 +855,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 val errorMsg = e.message ?: "Unknown error occurred"
                 withContext(Dispatchers.Main) {
-                    // Remove downloading tracking before showing failure
-                    _downloadingBookIds.value = _downloadingBookIds.value - book.id
-                    _downloadProgressMap.value = _downloadProgressMap.value - book.id
                     showDownloadFailedNotification(book.id, book.title, errorMsg)
                     Toast.makeText(context, "Download failed: $errorMsg", Toast.LENGTH_LONG).show()
                     onError(errorMsg)
                 }
             } finally {
-                // Remove from downloading set and jobs map
+                // Single cleanup point — remove from downloading set and jobs map
                 _downloadingBookIds.value = _downloadingBookIds.value - book.id
                 _downloadProgressMap.value = _downloadProgressMap.value - book.id
                 downloadJobs.remove(book.id)
@@ -889,7 +882,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
             
             httpClient.newCall(request).execute().use { response ->
@@ -969,7 +962,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         try {
             val request = Request.Builder()
                 .url(url)
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
             
             httpClient.newCall(request).execute().use { response ->

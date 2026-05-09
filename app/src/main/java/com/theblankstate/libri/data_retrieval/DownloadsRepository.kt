@@ -20,6 +20,10 @@ class DownloadsRepository(private val context: Context) {
     // In-memory cache to avoid repeated JSON parsing on main thread
     @Volatile
     private var cachedBooks: List<DownloadedBook>? = null
+    @Volatile
+    private var cachedBookIds: Set<String>? = null
+    @Volatile
+    private var cachedGutenbergIds: Set<Int>? = null
     private var cacheTimestamp: Long = 0L
     private val cacheValidityMs = 5000L // 5 seconds cache validity
 
@@ -35,12 +39,16 @@ class DownloadsRepository(private val context: Context) {
         val type = object : TypeToken<List<DownloadedBook>>() {}.type
         val books: List<DownloadedBook> = gson.fromJson(json, type)
         cachedBooks = books
+        cachedBookIds = books.mapTo(HashSet()) { it.id }
+        cachedGutenbergIds = books.mapNotNull { it.gutenbergId }.toHashSet()
         cacheTimestamp = now
         return books
     }
     
     private fun invalidateCache() {
         cachedBooks = null
+        cachedBookIds = null
+        cachedGutenbergIds = null
         cacheTimestamp = 0L
     }
 
@@ -64,7 +72,15 @@ class DownloadsRepository(private val context: Context) {
     }
     
     fun isBookDownloaded(bookId: String): Boolean {
-        return getDownloadedBooks().any { it.id == bookId }
+        // Ensure cache is populated
+        if (cachedBookIds == null) getDownloadedBooks()
+        return cachedBookIds?.contains(bookId) ?: false
+    }
+    
+    fun isGutenbergBookDownloaded(gutenbergId: Int): Boolean {
+        // Ensure cache is populated
+        if (cachedGutenbergIds == null) getDownloadedBooks()
+        return cachedGutenbergIds?.contains(gutenbergId) ?: false
     }
 
     fun saveFileToDownloads(

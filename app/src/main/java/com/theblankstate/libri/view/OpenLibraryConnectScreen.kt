@@ -54,7 +54,9 @@ fun OpenLibraryConnectScreen(
     }
 
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .safeDrawingPadding(),
         color = MaterialTheme.colorScheme.background
     ) {
         Column(

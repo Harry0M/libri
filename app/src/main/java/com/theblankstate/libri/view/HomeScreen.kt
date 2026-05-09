@@ -1,9 +1,12 @@
 package com.theblankstate.libri.view
 
 import android.app.Application
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -11,68 +14,79 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.datamodel.SubjectWork
 import com.theblankstate.libri.datamodel.bookModel
+import com.theblankstate.libri.view.components.BookCard
+import com.theblankstate.libri.view.components.ExpressiveLoadingIndicator
 import com.theblankstate.libri.viewModel.HomeState
 import com.theblankstate.libri.viewModel.HomeViewModel
 import com.theblankstate.libri.viewModel.HomeViewModelFactory
-import androidx.compose.ui.graphics.Color
+import java.util.Calendar
 
 @Composable
 fun HomeScreen(
-    onSearchClick: () -> Unit,
     onBookClick: (String) -> Unit,
-    onDownloadsClick: () -> Unit,
     onProfileClick: () -> Unit,
     onFreeGutenbergBooksClick: () -> Unit = {},
     viewModel: HomeViewModel = viewModel(factory = HomeViewModelFactory(LocalContext.current.applicationContext as Application))
 ) {
     val homeState by viewModel.homeState.collectAsState()
     val context = LocalContext.current
-    val userPreferencesRepository = androidx.compose.runtime.remember { com.theblankstate.libri.data.UserPreferencesRepository(context) }
-    val userName = userPreferencesRepository.getGoogleUser().second ?: "Book Lover"
+    val userPreferencesRepository = remember(context) { UserPreferencesRepository(context) }
+    val userName = remember(userPreferencesRepository) {
+        userPreferencesRepository.getGoogleUser().second ?: "Book Lover"
+    }
 
-    val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-    val greeting = when (currentHour) {
-        in 0..11 -> "Good Morning,"
-        in 12..16 -> "Good Afternoon,"
-        else -> "Good Evening,"
+    val greeting = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+        in 0..11 -> "Good morning"
+        in 12..16 -> "Good afternoon"
+        else -> "Good evening"
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             HomeTopBar(
-                onSearchClick = onSearchClick,
                 onProfileClick = onProfileClick
             )
         }
@@ -84,45 +98,71 @@ fun HomeScreen(
         ) {
             when (val state = homeState) {
                 is HomeState.Loading -> {
-                    CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                    ExpressiveLoadingIndicator(
+                        label = "Curating your shelf",
+                        modifier = Modifier.align(Alignment.Center)
+                    )
                 }
+
                 is HomeState.Error -> {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = state.message,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyLarge,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                        Button(onClick = { viewModel.retry() }) {
-                            Text("Retry")
-                        }
-                    }
+                    HomeErrorState(
+                        message = state.message,
+                        onRetry = viewModel::retry,
+                        modifier = Modifier.align(Alignment.Center)
+                    )
                 }
+
                 is HomeState.Success -> {
+                    val featuredBooks = state.content.flatMap { it.second }.take(3)
+                    val heroMessage = remember(state.content) {
+                        state.content.firstOrNull()?.let { (title, books) ->
+                            when {
+                                title.equals("Continue Reading", ignoreCase = true) ->
+                                    "Continue with ${books.firstOrNull()?.title ?: "your current read"}."
+                                title.startsWith("Because", ignoreCase = true) ->
+                                    "$title. Fresh picks are ready."
+                                title.startsWith("More from", ignoreCase = true) ->
+                                    "$title is ready."
+                                title.contains("Trending", ignoreCase = true) ->
+                                    "Trending picks are ready for you."
+                                books.isNotEmpty() ->
+                                    "Fresh picks from $title are ready."
+                                else -> "Your next chapter is ready."
+                            }
+                        } ?: "Your next chapter is ready."
+                    }
                     LazyColumn(
-                        contentPadding = PaddingValues(bottom = 16.dp),
+                        contentPadding = PaddingValues(bottom = 104.dp),
                         verticalArrangement = Arrangement.spacedBy(24.dp)
                     ) {
                         item {
-                            Text(
-                                text = "$greeting $userName",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp)
+                            HomeHero(
+                                greeting = greeting,
+                                userName = userName,
+                                featuredBooks = featuredBooks,
+                                message = heroMessage
                             )
                         }
-                        // Free Books Banner
+
                         item {
-                            FreeBooksBanner(onClick = onFreeGutenbergBooksClick)
+                            HomeActionRail(
+                                title = state.gutenbergTitle,
+                                subtitle = state.gutenbergSubtitle,
+                                onFreeGutenbergBooksClick = onFreeGutenbergBooksClick
+                            )
                         }
+
                         items(state.content, key = { it.first }) { (title, books) ->
-                            HomeSection(title = title) {
-                                RelatedBookCarousel(books = books, onBookClick = onBookClick)
+                            if (books.isNotEmpty()) {
+                                HomeSection(
+                                    title = title,
+                                    count = books.size
+                                ) {
+                                    RelatedBookCarousel(
+                                        books = books,
+                                        onBookClick = onBookClick
+                                    )
+                                }
                             }
                         }
                     }
@@ -134,35 +174,223 @@ fun HomeScreen(
 
 @Composable
 fun HomeTopBar(
-    onSearchClick: () -> Unit,
     onProfileClick: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
+        tonalElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = 20.dp, top = 0.dp, end = 16.dp, bottom = 0.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column {
+                Text(
+                    text = "Libri",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Read, collect, continue",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalIconButton(onClick = onProfileClick) {
+                    Icon(Icons.Default.Person, contentDescription = "Profile")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeHero(
+    greeting: String,
+    userName: String,
+    featuredBooks: List<bookModel>,
+    message: String
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(
+                Brush.linearGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primaryContainer,
+                        MaterialTheme.colorScheme.tertiaryContainer,
+                        MaterialTheme.colorScheme.secondaryContainer
+                    )
+                )
+            )
+            .padding(20.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(end = 104.dp)
+        ) {
+            Text(
+                text = "$greeting,",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Text(
+                text = userName,
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
+            )
+        }
+
+        HeroCoverStack(
+            books = featuredBooks,
+            modifier = Modifier.align(Alignment.CenterEnd)
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.HeroCoverStack(
+    books: List<bookModel>,
+    modifier: Modifier = Modifier
+) {
+    val covers = books.filter { it.coverUrl != null }.take(3)
+    Box(
+        modifier = modifier
+            .width(112.dp)
+            .height(150.dp)
+    ) {
+        if (covers.isEmpty()) {
+            HeroCoverPlaceholder(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(width = 92.dp, height = 132.dp)
+            )
+        } else {
+            covers.forEachIndexed { index, book ->
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(book.coverUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = book.title,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .offset(x = ((index - 1) * 18).dp, y = (index * 4).dp)
+                        .size(width = 78.dp, height = 120.dp)
+                        .clip(MaterialTheme.shapes.medium),
+                    contentScale = ContentScale.Crop
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroCoverPlaceholder(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.54f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Default.AutoStories,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(40.dp)
+        )
+    }
+}
+
+@Composable
+private fun HomeActionRail(
+    title: String,
+    subtitle: String,
+    onFreeGutenbergBooksClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "Libri",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
+        HomeActionTile(
+            title = title,
+            subtitle = subtitle,
+            icon = {
+                Icon(Icons.Default.Explore, contentDescription = null)
+            },
+            color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onFreeGutenbergBooksClick
         )
-        Row {
-            androidx.compose.material3.IconButton(onClick = onProfileClick) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.Person,
-                    contentDescription = "Profile",
-                    modifier = Modifier.size(28.dp)
-                )
+    }
+}
+
+@Composable
+private fun HomeActionTile(
+    title: String,
+    subtitle: String,
+    icon: @Composable () -> Unit,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier
+            .height(96.dp)
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(MaterialTheme.shapes.medium)
+                    .background(color),
+                contentAlignment = Alignment.Center
+            ) {
+                icon()
             }
-            androidx.compose.material3.IconButton(onClick = onSearchClick) {
-                androidx.compose.material3.Icon(
-                    imageVector = androidx.compose.material.icons.Icons.Default.Search,
-                    contentDescription = "Search",
-                    modifier = Modifier.size(28.dp)
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
@@ -172,15 +400,35 @@ fun HomeTopBar(
 @Composable
 fun HomeSection(
     title: String,
+    count: Int,
     content: @Composable () -> Unit
 ) {
-    Column(modifier = Modifier.padding(vertical = 8.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Text(
+                    text = "$count curated picks",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                Icons.Default.TrendingUp,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.secondary
+            )
+        }
         content()
     }
 }
@@ -190,60 +438,21 @@ fun BookCarousel(
     books: List<SubjectWork>,
     onBookClick: (String) -> Unit
 ) {
+    val listState = rememberLazyListState()
     LazyRow(
+        state = listState,
+        flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
         contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         items(books, key = { it.key ?: it.title.hashCode() }) { book ->
-            BookCard(book = book, onClick = { book.key?.let { onBookClick(it) } })
-        }
-    }
-}
-
-@Composable
-fun BookCard(
-    book: SubjectWork,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .width(160.dp)
-            .height(260.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(book.coverUrl)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = book.title,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp)
-                    .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
-                contentScale = ContentScale.Crop
+            BookCard(
+                title = book.title.orEmpty(),
+                author = book.authors?.firstOrNull()?.name.orEmpty(),
+                coverUrl = book.coverUrl,
+                badgeText = book.firstPublishYear?.toString(),
+                onClick = { book.key?.let { onBookClick(it) } }
             )
-            Column(modifier = Modifier.padding(8.dp)) {
-                Text(
-                    text = book.title ?: "Unknown Title",
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = book.authors?.firstOrNull()?.name ?: "Unknown Author",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
     }
 }
@@ -253,105 +462,58 @@ fun RelatedBookCarousel(
     books: List<bookModel>,
     onBookClick: (String) -> Unit
 ) {
+    val listState = rememberLazyListState()
     LazyRow(
+        state = listState,
+        flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
         contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         items(books, key = { it.key ?: it.title.hashCode() }) { book ->
-            RelatedBookCard(book = book, onClick = { book.key?.let { onBookClick(it) } })
-        }
-    }
-}
-
-@Composable
-fun RelatedBookCard(
-    book: bookModel,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .width(160.dp)
-            .height(260.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(book.coverUrl)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = book.title,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp)
-                    .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
-                contentScale = ContentScale.Crop
+            BookCard(
+                title = book.title,
+                author = book.author_name?.firstOrNull().orEmpty(),
+                coverUrl = book.coverUrl,
+                badgeText = book.first_publish_year?.toString(),
+                onClick = { book.key?.let { onBookClick(it) } }
             )
-            Column(modifier = Modifier.padding(8.dp)) {
-                Text(
-                    text = book.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.Medium
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = book.author_name?.firstOrNull() ?: "Unknown Author",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
     }
 }
 
 @Composable
-fun FreeBooksBanner(
-    onClick: () -> Unit
+private fun HomeErrorState(
+    message: String,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = Modifier
+    Surface(
+        modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            .padding(24.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.errorContainer,
+        tonalElevation = 4.dp
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Column {
-                Text(
-                    text = "Gutenberg Library",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-                Text(
-                    text = "70,000+ free books",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                )
-            }
             Text(
-                text = "Explore →",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
+                text = "Could not load your home shelf",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer
             )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.78f),
+                textAlign = TextAlign.Center
+            )
+            Button(onClick = onRetry) {
+                Text("Retry")
+            }
         }
     }
 }

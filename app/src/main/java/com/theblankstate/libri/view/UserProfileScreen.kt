@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.theblankstate.libri.data.UserPreferencesRepository
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.OpenLibraryViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -32,8 +33,9 @@ fun UserProfileScreen(
     val context = LocalContext.current
     val userPreferencesRepository = remember { UserPreferencesRepository(context) }
     val googleUser = remember { userPreferencesRepository.getGoogleUser() }
-    val userName = googleUser.first ?: "User"
-    val userEmail = googleUser.second ?: ""
+    val userEmail = googleUser.first.orEmpty()
+    val userName = googleUser.second?.takeIf { it.isNotBlank() }
+        ?: userEmail.substringBefore("@").ifBlank { "User" }
     
     val isOpenLibraryConnected = userPreferencesRepository.isOpenLibraryLoggedIn()
     val openLibraryUsername = userPreferencesRepository.getOpenLibraryUsername()
@@ -43,13 +45,10 @@ fun UserProfileScreen(
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Profile") },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
-                }
+            LibriTopAppBar(
+                title = "Profile",
+                onBackClick = onBackClick,
+                centerTitle = true
             )
         }
     ) { paddingValues ->
@@ -60,7 +59,7 @@ fun UserProfileScreen(
                 .padding(horizontal = 16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // User Info Card
             Card(
@@ -389,7 +388,7 @@ fun UserProfileScreen(
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(112.dp))
         }
     }
 

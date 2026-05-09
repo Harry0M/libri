@@ -64,7 +64,7 @@ class OpenLibraryRepository {
             val request = Request.Builder()
                 .url("$BASE_URL/account/login")
                 .post(formBody)
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .header("Accept", "text/html,application/xhtml+xml")
                 .build()
 
@@ -99,7 +99,7 @@ class OpenLibraryRepository {
             val request = Request.Builder()
                 .url("$BASE_URL/account/loans")
                 .header("Cookie", "session=$sessionCookie")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -164,7 +164,7 @@ class OpenLibraryRepository {
             val request = Request.Builder()
                 .url("$BASE_URL/account/loans.json")
                 .header("Cookie", "session=$sessionCookie")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .header("Accept", "application/json")
                 .build()
 
@@ -259,17 +259,17 @@ class OpenLibraryRepository {
      * Fetch book details (title, author, cover) from book key
      * Returns: Triple of (workKey, title, author, coverId)
      */
-    private fun fetchBookDetails(bookKey: String): Quadruple<String, String, String, Int?>? {
+    private suspend fun fetchBookDetails(bookKey: String): Quadruple<String, String, String, Int?>? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
             val request = Request.Builder()
                 .url("$BASE_URL$bookKey.json")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
+                if (!response.isSuccessful) return@withContext null
                 
-                val bodyText = response.body?.string() ?: return null
+                val bodyText = response.body?.string() ?: return@withContext null
                 val json = JSONObject(bodyText)
                 
                 val title = json.optString("title", "Unknown Title")
@@ -294,36 +294,36 @@ class OpenLibraryRepository {
                 val covers = json.optJSONArray("covers")
                 val coverId = covers?.optInt(0)?.takeIf { it > 0 }
                 
-                return Quadruple(workKey, title, author, coverId)
+                Quadruple(workKey, title, author, coverId)
             }
         } catch (e: Exception) {
             Log.e(TAG, "fetchBookDetails error for $bookKey", e)
-            return null
+            null
         }
     }
     
     /**
      * Fetch author name from author key
      */
-    private fun fetchAuthorName(authorKey: String): String? {
+    private suspend fun fetchAuthorName(authorKey: String): String? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         try {
             val request = Request.Builder()
                 .url("$BASE_URL$authorKey.json")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
+                if (!response.isSuccessful) return@withContext null
                 
-                val bodyText = response.body?.string() ?: return null
+                val bodyText = response.body?.string() ?: return@withContext null
                 val json = JSONObject(bodyText)
                 
-                return json.optString("name", null) 
+                json.optString("name", null) 
                     ?: json.optString("personal_name", null)
             }
         } catch (e: Exception) {
             Log.e(TAG, "fetchAuthorName error", e)
-            return null
+            null
         }
     }
     
@@ -335,7 +335,7 @@ class OpenLibraryRepository {
             val request = Request.Builder()
                 .url("$BASE_URL/account/loan-history.json")
                 .header("Cookie", "session=$sessionCookie")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .header("Accept", "application/json")
                 .build()
 
@@ -364,7 +364,7 @@ class OpenLibraryRepository {
         try {
             val request = Request.Builder()
                 .url("$BASE_URL/people/$username/books/want-to-read.json")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -383,7 +383,7 @@ class OpenLibraryRepository {
         try {
             val request = Request.Builder()
                 .url("$BASE_URL/people/$username/books/already-read.json")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -402,7 +402,7 @@ class OpenLibraryRepository {
         try {
             val request = Request.Builder()
                 .url("$BASE_URL/people/$username/books/currently-reading.json")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->
@@ -422,7 +422,7 @@ class OpenLibraryRepository {
             val request = Request.Builder()
                 .url("$BASE_URL${workKey}.json")
                 .header("Cookie", "session=$sessionCookie")
-                .header("User-Agent", "ScribeApp/1.0 (Android)")
+                .header("User-Agent", "Libri/1.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->

@@ -1,10 +1,10 @@
 package com.theblankstate.libri.viewModel
 
 import android.app.Application
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.theblankstate.libri.data_retrieval.repository
+import com.theblankstate.libri.data.RecommendationSeeds
 import com.theblankstate.libri.datamodel.bookModel
 import com.theblankstate.libri.data.UserPreferencesRepository
 import kotlinx.coroutines.async
@@ -15,12 +15,16 @@ import kotlinx.coroutines.launch
 
 sealed interface HomeState {
     object Loading : HomeState
-    data class Success(val content: List<Pair<String, List<bookModel>>>) : HomeState
+    data class Success(
+        val content: List<Pair<String, List<bookModel>>>,
+        val gutenbergTitle: String,
+        val gutenbergSubtitle: String
+    ) : HomeState
     data class Error(val message: String) : HomeState
 }
 
-class HomeViewModel(application: Application) : ViewModel() {
-    private val repository = repository()
+class HomeViewModel(application: Application) : AndroidViewModel(application) {
+    private val apiRepository = com.theblankstate.libri.data_retrieval.repository
     private val userPreferencesRepository = UserPreferencesRepository(application)
 
     private val _homeState = MutableStateFlow<HomeState>(HomeState.Loading)
@@ -40,60 +44,90 @@ class HomeViewModel(application: Application) : ViewModel() {
             try {
                 val selectedAuthors = userPreferencesRepository.getSelectedAuthors().toList().shuffled().take(3)
                 val selectedGenres = userPreferencesRepository.getSelectedGenres().toList().shuffled().take(3)
+                val selectedLanguages = userPreferencesRepository.getSelectedLanguages().toList()
+                val preferredLanguage = RecommendationSeeds.preferredOpenLibraryLanguage(selectedLanguages)
                 val recentBookIds = userPreferencesRepository.getRecentBooks()
 
                 val deferredContent = mutableListOf<kotlinx.coroutines.Deferred<Pair<String, List<bookModel>>>>()
 
                 // Fetch Trending Books
                 val trendingBooksDeferred = async {
-                    val query = "trending_score_hourly_sum:[1 TO *] -subject:\"content_warning:cover\" language:eng"
-                    val books = repository.getbooks(query = query, sort = "trending", limit = 20)
-                    "Trending Now" to books.filter { it.has_fulltext == true && !it.ia.isNullOrEmpty() }.take(10)
+                    val query = "trending_score_hourly_sum:[1 TO *] -subject:\"content_warning:cover\""
+                    val books = apiRepository.getbooks(
+                        query = query,
+                        lang = preferredLanguage?.twoLetter,
+                        sort = "trending",
+                        limit = 20
+                    )
+                    "Trending on Open Library" to books.filterReadable().take(10)
                 }
 
                 // Continue Reading (Fetch details for recent books)
                 val recentBooksDeferred = async {
                     val books = recentBookIds.mapNotNull { id ->
                         try {
-                            // Try to fetch from cache or API
-                            // This is a simplified approach; ideally we'd have a local DB
-                            val workId = id.removePrefix("/works/")
-                            val details = repository.getWorkDetails(workId)
-                            details?.let {
-                                bookModel(
-                                    key = "/works/$workId",
-                                    title = it.title ?: "Unknown",
-                                    cover_i = it.covers?.firstOrNull(),
-                                    subject = it.subjects,
-                                    has_fulltext = true // Assuming recently read books were available
-                                )
+                            val normalizedKey = when {
+                                id.startsWith("/works/") || id.startsWith("/books/") -> id
+                                id.endsWith("M", ignoreCase = true) -> "/books/$id"
+                                else -> "/works/${id.removePrefix("works/")}"
                             }
+
+                            apiRepository.getbooks(query = "key:$normalizedKey", limit = 1).firstOrNull()
+                                ?: if (normalizedKey.startsWith("/works/")) {
+                                    val workId = normalizedKey.removePrefix("/works/")
+                                    val details = apiRepository.getWorkDetails(workId)
+                                    details?.let {
+                                        bookModel(
+                                            key = normalizedKey,
+                                            title = it.title ?: "Unknown",
+                                            cover_i = it.covers?.firstOrNull(),
+                                            subject = it.subjects,
+                                            has_fulltext = true
+                                        )
+                                    }
+                                } else {
+                                    null
+                                }
                         } catch (e: Exception) { null }
-                    }.filter { it.has_fulltext == true && !it.ia.isNullOrEmpty() } // Check both has_fulltext and ia
+                    }
                     "Continue Reading" to books
                 }
 
                 // Fetch for Authors
                 selectedAuthors.forEach { author ->
                     deferredContent.add(async {
-                        val books = repository.getbooks(author = author, limit = 10)
-                        author to books.filter { it.has_fulltext == true && !it.ia.isNullOrEmpty() }
+                        val books = apiRepository.getbooks(
+                            author = author,
+                            lang = preferredLanguage?.twoLetter,
+                            limit = 12
+                        )
+                        "More from $author" to books.filterReadable()
                     })
                 }
 
                 // Fetch for Genres
                 selectedGenres.forEach { genre ->
                     deferredContent.add(async {
-                        val books = repository.getbooks(subject = genre, limit = 10)
-                        genre to books.filter { it.has_fulltext == true && !it.ia.isNullOrEmpty() }
+                        val books = apiRepository.getbooks(
+                            subject = RecommendationSeeds.normalizeTopic(genre),
+                            lang = preferredLanguage?.twoLetter,
+                            sort = "random",
+                            limit = 12
+                        )
+                        "Because you like $genre" to books.filterReadable()
                     })
                 }
                 
                 // Fallback if no preferences
                 if (selectedAuthors.isEmpty() && selectedGenres.isEmpty()) {
                      deferredContent.add(async { 
-                         val books = repository.getbooks(subject = "literature", limit = 10)
-                         "Classic Literature" to books.filter { it.has_fulltext == true && !it.ia.isNullOrEmpty() }
+                         val books = apiRepository.getbooks(
+                             subject = "literature",
+                             lang = preferredLanguage?.twoLetter,
+                             sort = "random",
+                             limit = 12
+                         )
+                         "Classic Literature" to books.filterReadable()
                      })
                 }
 
@@ -103,13 +137,8 @@ class HomeViewModel(application: Application) : ViewModel() {
                 
                 val finalContent = mutableListOf<Pair<String, List<bookModel>>>()
 
-                // Add Trending Now
-                if (trendingBooks.second.size >= 4) {
-                    finalContent.add(trendingBooks)
-                }
-
-                // Only add Continue Reading if it has at least 4 books
-                if (recentBooks.second.size >= 4) {
+                // Add Continue Reading if it has any books
+                if (recentBooks.second.isNotEmpty()) {
                     finalContent.add(recentBooks)
                 }
                 // Only add sections with at least 4 books
@@ -118,19 +147,32 @@ class HomeViewModel(application: Application) : ViewModel() {
                         finalContent.add(title to books)
                     }
                 }
+                // Add Trending after personalized content so the hero reflects preferences first.
+                if (trendingBooks.second.size >= 4) {
+                    finalContent.add(trendingBooks)
+                }
 
-                _homeState.value = HomeState.Success(finalContent)
+                _homeState.value = HomeState.Success(
+                    content = finalContent,
+                    gutenbergTitle = RecommendationSeeds.gutenbergHeadline(selectedGenres, selectedLanguages),
+                    gutenbergSubtitle = RecommendationSeeds.gutenbergSubtitle(selectedGenres, selectedLanguages)
+                )
             } catch (e: Exception) {
                 _homeState.value = HomeState.Error("Failed to load home content: ${e.message}")
             }
         }
     }
+
+    private fun List<bookModel>.filterReadable(): List<bookModel> {
+        return filter { it.has_fulltext == true && !it.ia.isNullOrEmpty() }
+            .distinctBy { it.key ?: it.title }
+    }
 }
 
 class HomeViewModelFactory(private val application: Application) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(HomeViewModel::class.java)) {
-            @Suppress("UNCHECKED_CAST")
             return HomeViewModel(application) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class")

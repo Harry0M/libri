@@ -8,6 +8,8 @@ import com.theblankstate.libri.data.OpenLibraryUser
 import com.theblankstate.libri.data.OpenLibraryLoan
 import com.theblankstate.libri.data.OpenLibraryListItem
 import com.theblankstate.libri.data.UserPreferencesRepository
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -104,16 +106,29 @@ class OpenLibraryViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             _isLoadingLists.value = true
             try {
-                // Load all lists in parallel
                 val session = userPreferences.getOpenLibrarySession().third
                 
-                if (session != null) {
-                    _myLoans.value = openLibraryRepository.getMyLoans(session, user)
+                // Run all list fetches in parallel for ~4x speedup
+                coroutineScope {
+                    val loansDeferred = async {
+                        if (session != null) openLibraryRepository.getMyLoans(session, user)
+                        else emptyList()
+                    }
+                    val wantToReadDeferred = async {
+                        openLibraryRepository.getWantToRead(user)
+                    }
+                    val alreadyReadDeferred = async {
+                        openLibraryRepository.getAlreadyRead(user)
+                    }
+                    val currentlyReadingDeferred = async {
+                        openLibraryRepository.getCurrentlyReading(user)
+                    }
+                    
+                    _myLoans.value = loansDeferred.await()
+                    _wantToRead.value = wantToReadDeferred.await()
+                    _alreadyRead.value = alreadyReadDeferred.await()
+                    _currentlyReading.value = currentlyReadingDeferred.await()
                 }
-                
-                _wantToRead.value = openLibraryRepository.getWantToRead(user)
-                _alreadyRead.value = openLibraryRepository.getAlreadyRead(user)
-                _currentlyReading.value = openLibraryRepository.getCurrentlyReading(user)
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {

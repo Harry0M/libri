@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
@@ -167,6 +168,7 @@ fun LibraryScreen(
     Scaffold(
         floatingActionButton = {
             ExtendedFloatingActionButton(
+                modifier = Modifier.padding(bottom = 84.dp),
                 onClick = { showAddOptions = true },
                 icon = { Icon(Icons.Default.Add, "Add", modifier = Modifier.size(24.dp)) },
                 text = { 
@@ -187,12 +189,13 @@ fun LibraryScreen(
             modifier = modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .consumeWindowInsets(paddingValues)
         ) {
             // Top Bar Area with Search, Filter, Import
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(start = 16.dp, top = 0.dp, end = 16.dp, bottom = 6.dp)
             ) {
                 // Search Bar
                 TextField(
@@ -418,7 +421,7 @@ fun LibraryScreen(
                     }
                 } else {
                     androidx.compose.foundation.lazy.LazyColumn(
-                        contentPadding = PaddingValues(bottom = 80.dp)
+                        contentPadding = PaddingValues(bottom = 104.dp)
                     ) {
                         items(
                             count = downloadedBooks.size,
@@ -460,7 +463,7 @@ fun LibraryScreen(
                                 val booksByStatus = state.books.groupBy { it.readingStatusEnum }
                                 
                                 androidx.compose.foundation.lazy.LazyColumn(
-                                    contentPadding = PaddingValues(bottom = 80.dp),
+                                    contentPadding = PaddingValues(bottom = 104.dp),
                                     verticalArrangement = Arrangement.spacedBy(16.dp)
                                 ) {
                                     // Local Library Books grouped by status
@@ -606,7 +609,7 @@ fun LibraryScreen(
                             } else {
                                 // Flat List for specific filter
                                 androidx.compose.foundation.lazy.LazyColumn(
-                                    contentPadding = PaddingValues(bottom = 80.dp)
+                                    contentPadding = PaddingValues(bottom = 104.dp)
                                 ) {
                                     items(
                                         count = state.books.size,
@@ -2181,7 +2184,7 @@ fun OpenLibraryListsContent(
         }
     } else {
         androidx.compose.foundation.lazy.LazyColumn(
-            contentPadding = PaddingValues(bottom = 80.dp),
+            contentPadding = PaddingValues(bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // Header with username

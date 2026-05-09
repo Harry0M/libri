@@ -33,8 +33,8 @@ data class bookModel(
     val dewey_decimal_class: List<String>? = null,
     val lcc_number: List<String>? = null
 ) {
-    val coverUrl: String
-        get() = "https://covers.openlibrary.org/b/id/${cover_i}-L.jpg"
+    val coverUrl: String?
+        get() = cover_i?.let { "https://covers.openlibrary.org/b/id/${it}-L.jpg" }
 }
 
 data class SearchResponse(

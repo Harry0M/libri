@@ -77,10 +77,13 @@ fun BookDetailScreen(
     var showSuccessSnackbar by remember { mutableStateOf(false) }
 
     val iaId = book?.ia?.firstOrNull()
-    // For borrowing, we need the edition key (like OL9219606M)
-    // The book.key is typically like "/works/OL1234W" for works or "/books/OL5678M" for editions
-    // We want to pass the full book page URL path for borrowing
-    val borrowKey = book?.key  // e.g., "/works/OL1234W" or "/books/OL5678M"
+    val borrowKey = remember(book, editions) {
+        book?.key?.takeIf { it.startsWith("/books/") }
+            ?: book?.cover_edition_key?.takeIf { it.isNotBlank() }?.let { "/books/$it" }
+            ?: editions.firstOrNull { !it.ocaid.isNullOrBlank() }?.key
+            ?: editions.firstOrNull { !it.key.isNullOrBlank() }?.key
+            ?: book?.key
+    }
 
     if (showBorrowDialog && borrowKey != null) {
         AlertDialog(
@@ -169,7 +172,7 @@ fun BookDetailScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -860,7 +863,7 @@ fun BookDetailScreen(
                             title = book.title,
                             author = book.author_name?.firstOrNull() ?: "Unknown Author",
                             coverUrl = book.coverUrl,
-                            description = workDetail?.description?.toString()?.take(500),
+                            description = workDetail?.getDescriptionText()?.take(500),
                             isbn = book.isbn?.firstOrNull(),
                             openLibraryId = book.key,
                             internetArchiveId = iaId,
