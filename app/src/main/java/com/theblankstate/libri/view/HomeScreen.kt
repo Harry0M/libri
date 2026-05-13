@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
@@ -152,7 +153,10 @@ fun HomeScreen(
                             )
                         }
 
-                        items(state.content, key = { it.first }) { (title, books) ->
+                        itemsIndexed(
+                            state.content,
+                            key = { index, section -> "${section.first}-$index" }
+                        ) { _, (title, books) ->
                             if (books.isNotEmpty()) {
                                 HomeSection(
                                     title = title,
@@ -469,7 +473,10 @@ fun RelatedBookCarousel(
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        items(books, key = { it.key ?: it.title.hashCode() }) { book ->
+        itemsIndexed(
+            books,
+            key = { index, book -> "${book.key ?: book.title}-$index" }
+        ) { _, book ->
             BookCard(
                 title = book.title,
                 author = book.author_name?.firstOrNull().orEmpty(),

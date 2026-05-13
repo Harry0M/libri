@@ -45,7 +45,7 @@ data class EditionModel(
             ia = ocaid?.let { listOf(it) },
             isbn = (isbn13.orEmpty() + isbn10.orEmpty()).distinct(),
             publisher = publishers,
-            publish_date = publishDate,
+            publish_date = publishDate?.let { listOf(it) },
             number_of_pages = numberOfPages,
             dewey_decimal_class = deweyDecimalClass,
             lcc_number = lccNumber

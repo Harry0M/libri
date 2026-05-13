@@ -21,6 +21,12 @@ object retrofitinatance {
         val cache = cacheDir?.let { Cache(File(it, "http_cache"), cacheSize) }
         
         OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", "Libri/1.0 Android (https://github.com/Harry0M/libri)")
+                    .build()
+                chain.proceed(request)
+            }
             .apply { if (cache != null) cache(cache) }
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
@@ -31,6 +37,12 @@ object retrofitinatance {
     // Separate client for Gutendex with longer timeout
     private val gutendexHttpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", "Libri/1.0 Android (https://github.com/Harry0M/libri)")
+                    .build()
+                chain.proceed(request)
+            }
             .connectTimeout(60, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)

@@ -7,11 +7,14 @@ import androidx.lifecycle.viewModelScope
 import com.theblankstate.libri.data.RecommendationSeeds
 import com.theblankstate.libri.datamodel.bookModel
 import com.theblankstate.libri.data.UserPreferencesRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
 
 sealed interface HomeState {
     object Loading : HomeState
@@ -48,92 +51,98 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 val preferredLanguage = RecommendationSeeds.preferredOpenLibraryLanguage(selectedLanguages)
                 val recentBookIds = userPreferencesRepository.getRecentBooks()
 
-                val deferredContent = mutableListOf<kotlinx.coroutines.Deferred<Pair<String, List<bookModel>>>>()
+                val (recentBooks, trendingBooks, contentResults) = supervisorScope {
+                    val deferredContent = mutableListOf<kotlinx.coroutines.Deferred<Pair<String, List<bookModel>>>>()
 
-                // Fetch Trending Books
-                val trendingBooksDeferred = async {
-                    val query = "trending_score_hourly_sum:[1 TO *] -subject:\"content_warning:cover\""
-                    val books = apiRepository.getbooks(
-                        query = query,
-                        lang = preferredLanguage?.twoLetter,
-                        sort = "trending",
-                        limit = 20
-                    )
-                    "Trending on Open Library" to books.filterReadable().take(10)
-                }
-
-                // Continue Reading (Fetch details for recent books)
-                val recentBooksDeferred = async {
-                    val books = recentBookIds.mapNotNull { id ->
-                        try {
-                            val normalizedKey = when {
-                                id.startsWith("/works/") || id.startsWith("/books/") -> id
-                                id.endsWith("M", ignoreCase = true) -> "/books/$id"
-                                else -> "/works/${id.removePrefix("works/")}"
-                            }
-
-                            apiRepository.getbooks(query = "key:$normalizedKey", limit = 1).firstOrNull()
-                                ?: if (normalizedKey.startsWith("/works/")) {
-                                    val workId = normalizedKey.removePrefix("/works/")
-                                    val details = apiRepository.getWorkDetails(workId)
-                                    details?.let {
-                                        bookModel(
-                                            key = normalizedKey,
-                                            title = it.title ?: "Unknown",
-                                            cover_i = it.covers?.firstOrNull(),
-                                            subject = it.subjects,
-                                            has_fulltext = true
-                                        )
-                                    }
-                                } else {
-                                    null
-                                }
-                        } catch (e: Exception) { null }
+                    // Fetch Trending Books
+                    val trendingBooksDeferred = async {
+                        val query = "trending_score_hourly_sum:[1 TO *] -subject:\"content_warning:cover\""
+                        val books = safeGetBooks(
+                            query = query,
+                            lang = preferredLanguage?.twoLetter,
+                            sort = "trending",
+                            limit = 20
+                        )
+                        "Trending on Open Library" to books.filterReadable().take(10)
                     }
-                    "Continue Reading" to books
-                }
 
-                // Fetch for Authors
-                selectedAuthors.forEach { author ->
-                    deferredContent.add(async {
-                        val books = apiRepository.getbooks(
-                            author = author,
-                            lang = preferredLanguage?.twoLetter,
-                            limit = 12
-                        )
-                        "More from $author" to books.filterReadable()
-                    })
-                }
+                    // Continue Reading (Fetch details for recent books)
+                    val recentBooksDeferred = async {
+                        val books = recentBookIds.mapNotNull { id ->
+                            try {
+                                val normalizedKey = when {
+                                    id.startsWith("/works/") || id.startsWith("/books/") -> id
+                                    id.endsWith("M", ignoreCase = true) -> "/books/$id"
+                                    else -> "/works/${id.removePrefix("works/")}"
+                                }
 
-                // Fetch for Genres
-                selectedGenres.forEach { genre ->
-                    deferredContent.add(async {
-                        val books = apiRepository.getbooks(
-                            subject = RecommendationSeeds.normalizeTopic(genre),
-                            lang = preferredLanguage?.twoLetter,
-                            sort = "random",
-                            limit = 12
-                        )
-                        "Because you like $genre" to books.filterReadable()
-                    })
-                }
-                
-                // Fallback if no preferences
-                if (selectedAuthors.isEmpty() && selectedGenres.isEmpty()) {
-                     deferredContent.add(async { 
-                         val books = apiRepository.getbooks(
-                             subject = "literature",
-                             lang = preferredLanguage?.twoLetter,
-                             sort = "random",
-                             limit = 12
-                         )
-                         "Classic Literature" to books.filterReadable()
-                     })
-                }
+                                safeGetBooks(query = "key:$normalizedKey", limit = 1).firstOrNull()
+                                    ?: if (normalizedKey.startsWith("/works/")) {
+                                        val workId = normalizedKey.removePrefix("/works/")
+                                        val details = safeGetWorkDetails(workId)
+                                        details?.let {
+                                            bookModel(
+                                                key = normalizedKey,
+                                                title = it.title ?: "Unknown",
+                                                cover_i = it.covers?.firstOrNull(),
+                                                subject = it.subjects,
+                                                has_fulltext = true
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    }
+                            } catch (e: Exception) {
+                                null
+                            }
+                        }
+                        "Continue Reading" to books
+                    }
 
-                val recentBooks = recentBooksDeferred.await()
-                val trendingBooks = trendingBooksDeferred.await()
-                val contentResults = deferredContent.awaitAll()
+                    // Fetch for Authors
+                    selectedAuthors.distinct().forEach { author ->
+                        deferredContent.add(async {
+                            val books = safeGetBooks(
+                                author = author,
+                                lang = preferredLanguage?.twoLetter,
+                                limit = 12
+                            )
+                            "More from $author" to books.filterReadable()
+                        })
+                    }
+
+                    // Fetch for Genres
+                    selectedGenres.distinct().forEach { genre ->
+                        deferredContent.add(async {
+                            val books = safeGetBooks(
+                                subject = RecommendationSeeds.normalizeTopic(genre),
+                                lang = preferredLanguage?.twoLetter,
+                                sort = "random",
+                                limit = 12
+                            )
+                            "Because you like $genre" to books.filterReadable()
+                        })
+                    }
+                    
+                    // Fallback if no preferences
+                    if (selectedAuthors.isEmpty() && selectedGenres.isEmpty()) {
+                        deferredContent.add(async {
+                            val books = safeGetBooks(
+                                subject = "literature",
+                                lang = preferredLanguage?.twoLetter,
+                                sort = "random",
+                                limit = 12
+                            )
+                            "Classic Literature" to books.filterReadable()
+                        })
+                    }
+
+                    Triple(
+                        recentBooksDeferred.await(),
+                        trendingBooksDeferred.await(),
+                        deferredContent.awaitAll()
+                    )
+                }
                 
                 val finalContent = mutableListOf<Pair<String, List<bookModel>>>()
 
@@ -161,6 +170,40 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 _homeState.value = HomeState.Error("Failed to load home content: ${e.message}")
             }
         }
+    }
+
+    private suspend fun safeGetBooks(
+        query: String? = null,
+        title: String? = null,
+        author: String? = null,
+        subject: String? = null,
+        isbn: String? = null,
+        publisher: String? = null,
+        language: String? = null,
+        lang: String? = null,
+        sort: String? = null,
+        limit: Int = 20,
+        offset: Int = 0
+    ): List<bookModel> = withContext(Dispatchers.IO) {
+        runCatching {
+            apiRepository.getbooks(
+                query = query,
+                title = title,
+                author = author,
+                subject = subject,
+                isbn = isbn,
+                publisher = publisher,
+                language = language,
+                lang = lang,
+                sort = sort,
+                limit = limit,
+                offset = offset
+            )
+        }.getOrDefault(emptyList())
+    }
+
+    private suspend fun safeGetWorkDetails(workId: String) = withContext(Dispatchers.IO) {
+        runCatching { apiRepository.getWorkDetails(workId) }.getOrNull()
     }
 
     private fun List<bookModel>.filterReadable(): List<bookModel> {

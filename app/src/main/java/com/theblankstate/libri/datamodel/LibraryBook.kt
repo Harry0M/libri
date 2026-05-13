@@ -1,6 +1,8 @@
 package com.theblankstate.libri.datamodel
 
 import com.google.firebase.database.PropertyName
+import com.google.firebase.database.Exclude
+import com.google.firebase.database.IgnoreExtraProperties
 
 enum class ReadingStatus(val displayName: String) {
     WANT_TO_READ("Want to Read"),
@@ -10,6 +12,7 @@ enum class ReadingStatus(val displayName: String) {
     DROPPED("Dropped")
 }
 
+@IgnoreExtraProperties
 data class LibraryBook(
     val id: String = "",
     val title: String = "",
@@ -40,6 +43,7 @@ data class LibraryBook(
     val localFilePath: String? = null,
     val localFileFormat: BookFormat? = null
 ) {
+    @get:Exclude
     val readingStatusEnum: ReadingStatus
         get() = try {
             ReadingStatus.valueOf(status)
@@ -47,6 +51,7 @@ data class LibraryBook(
             ReadingStatus.WANT_TO_READ
         }
     
+    @get:Exclude
     val readingProgress: Float
         get() = if (totalPages > 0) (currentPage.toFloat() / totalPages.toFloat()) * 100 else 0f
 }

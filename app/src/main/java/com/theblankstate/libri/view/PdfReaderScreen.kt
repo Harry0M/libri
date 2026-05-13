@@ -3,12 +3,14 @@ package com.theblankstate.libri.view
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import android.util.LruCache
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.filled.List
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.withContext
@@ -23,6 +25,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.geometry.Offset
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.net.URL
@@ -47,6 +50,9 @@ fun PdfReaderScreen(
     author: String? = null,
     coverUrl: String? = null,
     fileUri: String? = null,
+    downloadUrl: String? = null,
+    fallbackArchiveId: String? = null,
+    onFallbackToArchiveReader: ((String) -> Unit)? = null,
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
@@ -58,17 +64,50 @@ fun PdfReaderScreen(
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
     val listState = rememberLazyListState()
+    val pageCache = remember(bookId) { PdfPageBitmapCache() }
+    val currentPage by remember {
+        derivedStateOf { listState.firstVisibleItemIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) }
+    }
 
     var downloadProgress by remember { mutableStateOf(0f) }
     
     // Enhanced Reader States
     var isNightMode by remember { mutableStateOf(false) }
     var showBookmarksDialog by remember { mutableStateOf(false) }
+    var showPageJumpDialog by remember { mutableStateOf(false) }
     var bookmarks by remember { 
         mutableStateOf(
             context.getSharedPreferences("bookmarks_$bookId", android.content.Context.MODE_PRIVATE)
                 .getStringSet("pages", emptySet())?.map { it.toInt() }?.toSet() ?: emptySet()
         )
+    }
+
+    LaunchedEffect(pageCount) {
+        if (pageCount > 0) {
+            val savedPage = context.getSharedPreferences("pdf_progress_$bookId", android.content.Context.MODE_PRIVATE)
+                .getInt("page", 0)
+                .coerceIn(0, pageCount - 1)
+            if (savedPage > 0) {
+                listState.scrollToItem(savedPage)
+            }
+        }
+    }
+
+    LaunchedEffect(currentPage, pageCount) {
+        if (pageCount > 0) {
+            context.getSharedPreferences("pdf_progress_$bookId", android.content.Context.MODE_PRIVATE)
+                .edit()
+                .putInt("page", currentPage)
+                .apply()
+        }
+    }
+
+    LaunchedEffect(error, fallbackArchiveId) {
+        val archiveId = fallbackArchiveId
+        if (error != null && !archiveId.isNullOrBlank() && onFallbackToArchiveReader != null) {
+            delay(1200)
+            onFallbackToArchiveReader.invoke(archiveId)
+        }
     }
     
     fun toggleBookmark(page: Int) {
@@ -86,7 +125,7 @@ fun PdfReaderScreen(
     }
 
     // Download and initialize PDF
-    LaunchedEffect(bookId, fileUri) {
+    LaunchedEffect(bookId, fileUri, downloadUrl) {
         withContext(Dispatchers.IO) {
             try {
                 if (fileUri != null) {
@@ -108,9 +147,9 @@ fun PdfReaderScreen(
                     val file = File(booksDir, "$bookId.pdf")
                     
                     if (!file.exists()) {
-                        // Download PDF from Archive.org
-                        val url = URL("https://archive.org/download/$bookId/$bookId.pdf")
+                        val url = URL(downloadUrl ?: "https://archive.org/download/$bookId/$bookId.pdf")
                         val connection = url.openConnection()
+                        connection.setRequestProperty("User-Agent", "Libri/1.0 Android (https://github.com/Harry0M/libri)")
                         connection.connect()
                         val length = connection.contentLength
                         
@@ -146,7 +185,29 @@ fun PdfReaderScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            pdfRenderer?.close()
+            try {
+                pdfRenderer?.let { renderer ->
+                    synchronized(renderer) {
+                        renderer.close()
+                    }
+                }
+            } catch (_: IllegalStateException) {
+                // Page was still open from a background render — safe to ignore,
+                // the renderer will be GC'd and the file descriptor closed.
+            }
+            pageCache.clear()
+        }
+    }
+
+    LaunchedEffect(currentPage, pageCount, pdfRenderer) {
+        val renderer = pdfRenderer ?: return@LaunchedEffect
+        if (pageCount <= 0) return@LaunchedEffect
+        withContext(Dispatchers.Default) {
+            ((currentPage - 1)..(currentPage + 2))
+                .filter { it in 0 until pageCount && pageCache.get(it) == null }
+                .forEach { page ->
+                    pageCache.put(page, renderPdfPage(renderer, page))
+                }
         }
     }
 
@@ -196,75 +257,136 @@ fun PdfReaderScreen(
         )
     }
 
-    Scaffold(
-        topBar = {
-            LibriTopAppBar(
-                title = title ?: "Reader",
-                onBackClick = onBackClick,
-                actions = {
-                    // Bookmarks List
-                    IconButton(onClick = { showBookmarksDialog = true }) {
-                        Icon(Icons.Default.List, "Bookmarks")
-                    }
-
-                    // Night Mode Toggle
-                    IconButton(onClick = { isNightMode = !isNightMode }) {
-                        Icon(
-                            imageVector = if (isNightMode) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = "Toggle Night Mode"
-                        )
-                    }
-                    
-                    IconButton(onClick = { scale = (scale + 0.5f).coerceIn(1f, 4f) }) {
-                        Text("+", style = MaterialTheme.typography.headlineMedium)
-                    }
-                    IconButton(onClick = { scale = (scale - 0.5f).coerceIn(1f, 4f) }) {
-                        Text("-", style = MaterialTheme.typography.headlineMedium)
-                    }
+    if (showPageJumpDialog && pageCount > 0) {
+        var targetPage by remember(showPageJumpDialog, currentPage) { mutableStateOf(currentPage.toFloat()) }
+        AlertDialog(
+            onDismissRequest = { showPageJumpDialog = false },
+            title = { Text("Go to page") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Page ${targetPage.toInt() + 1} of $pageCount",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Slider(
+                        value = targetPage,
+                        onValueChange = { targetPage = it },
+                        valueRange = 0f..(pageCount - 1).toFloat(),
+                        steps = 0
+                    )
                 }
-            )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch { listState.animateScrollToItem(targetPage.toInt()) }
+                        showPageJumpDialog = false
+                    }
+                ) {
+                    Text("Go")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPageJumpDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    var showChrome by remember { mutableStateOf(true) }
+
+    // Auto-hide chrome after 4 seconds
+    LaunchedEffect(showChrome) {
+        if (showChrome && !isLoading && error == null) {
+            delay(4000)
+            showChrome = false
         }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .background(if (isNightMode) Color(0xFF121212) else Color.DarkGray)
-        ) {
-            if (isLoading) {
+    }
+
+    val bgColor = if (isNightMode) Color(0xFF121212) else Color(0xFF2A2A2A)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(bgColor)
+            .statusBarsPadding()
+    ) {
+        // Content layer
+        when {
+            isLoading -> {
                 Column(
                     modifier = Modifier.align(Alignment.Center),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    LinearProgressIndicator(
-                        progress = { downloadProgress },
-                        modifier = Modifier.width(200.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    )
-                    Text(
-                        text = "Downloading... ${(downloadProgress * 100).toInt()}%",
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    if (downloadProgress > 0f) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.width(220.dp),
+                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Downloading… ${(downloadProgress * 100).toInt()}%",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    } else {
+                        com.theblankstate.libri.view.components.ExpressiveLoadingIndicator(
+                            label = "Preparing PDF",
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        )
+                    }
                 }
-            } else if (error != null) {
+            }
+
+            error != null -> {
                 Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = error ?: "Unknown error",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Button(onClick = { onBackClick() }) {
+                    Surface(
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        tonalElevation = 2.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                text = error ?: "Unknown error",
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
+                        }
+                    }
+                    if (!fallbackArchiveId.isNullOrBlank() && onFallbackToArchiveReader != null) {
+                        Text(
+                            text = "Opening the Internet Archive reader as a fallback…",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        FilledTonalButton(onClick = { onFallbackToArchiveReader.invoke(fallbackArchiveId) }) {
+                            Text("Open Archive Reader")
+                        }
+                    }
+                    OutlinedButton(onClick = onBackClick) {
                         Text("Go Back")
                     }
                 }
-            } else {
+            }
+
+            else -> {
                 pdfRenderer?.let { renderer ->
+                    // Tap to toggle chrome
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
@@ -272,9 +394,8 @@ fun PdfReaderScreen(
                             .pointerInput(Unit) {
                                 detectTransformGestures { _, pan, zoom, _ ->
                                     scale = (scale * zoom).coerceIn(1f, 4f)
-                                    // Only pan if zoomed in
                                     if (scale > 1f) {
-                                        val maxOffset = (scale - 1f) * 1000f // Approximate bound
+                                        val maxOffset = (scale - 1f) * 1000f
                                         offset = Offset(
                                             (offset.x + pan.x).coerceIn(-maxOffset, maxOffset),
                                             (offset.y + pan.y).coerceIn(-maxOffset, maxOffset)
@@ -299,11 +420,203 @@ fun PdfReaderScreen(
                                 pageIndex = pageIndex,
                                 isNightMode = isNightMode,
                                 isBookmarked = bookmarks.contains(pageIndex),
+                                cache = pageCache,
                                 onToggleBookmark = { toggleBookmark(pageIndex) }
                             )
                         }
                     }
                 }
+
+                // Invisible tap target to toggle chrome
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp)
+                        .align(Alignment.TopCenter)
+                )
+            }
+        }
+
+        // ── Top chrome: back + title + action chips ──
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showChrome,
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { -it },
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { -it },
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+        ) {
+            Surface(
+                color = bgColor.copy(alpha = 0.92f),
+                tonalElevation = 0.dp
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = onBackClick) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White)
+                        }
+                        Column(modifier = Modifier.weight(1f).padding(horizontal = 4.dp)) {
+                            Text(
+                                text = title ?: "PDF Reader",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White
+                            )
+                            if (pageCount > 0) {
+                                Text(
+                                    text = "Page ${currentPage + 1} of $pageCount",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val chipColors = FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        )
+                        val chipBorder = FilterChipDefaults.filterChipBorder(
+                            enabled = true, selected = false, borderColor = Color.Transparent
+                        )
+                        FilterChip(selected = false, onClick = { showPageJumpDialog = true },
+                            label = { Text("Go to page") },
+                            leadingIcon = { Icon(Icons.Default.List, null, modifier = Modifier.size(16.dp)) },
+                            colors = chipColors, border = chipBorder)
+                        FilterChip(selected = false, onClick = { showBookmarksDialog = true },
+                            label = { Text("Bookmarks") },
+                            leadingIcon = { Icon(Icons.Default.Bookmark, null, modifier = Modifier.size(16.dp)) },
+                            colors = chipColors, border = chipBorder)
+                        FilterChip(
+                            selected = bookmarks.contains(currentPage),
+                            onClick = {
+                                toggleBookmark(currentPage)
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            },
+                            label = { Text(if (bookmarks.contains(currentPage)) "Saved" else "Mark") },
+                            leadingIcon = { Icon(if (bookmarks.contains(currentPage)) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, null, modifier = Modifier.size(16.dp)) },
+                            colors = chipColors, border = chipBorder)
+                    }
+                }
+            }
+        }
+
+        // ── Bottom chrome: page slider with haptic ticks ──
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showChrome && pageCount > 1,
+            enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.slideInVertically { it },
+            exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.slideOutVertically { it },
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+        ) {
+            Surface(
+                color = bgColor.copy(alpha = 0.94f),
+                tonalElevation = 0.dp,
+                modifier = Modifier.navigationBarsPadding()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    var sliderValue by remember(currentPage) { mutableStateOf(currentPage.toFloat()) }
+                    var lastHapticTick by remember { mutableStateOf(-1) }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "${sliderValue.toInt() + 1}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White
+                        )
+
+                        Slider(
+                            value = sliderValue,
+                            onValueChange = { newVal ->
+                                sliderValue = newVal
+                                val rounded = newVal.toInt()
+                                if (rounded != lastHapticTick) {
+                                    lastHapticTick = rounded
+                                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                                }
+                            },
+                            onValueChangeFinished = {
+                                val target = sliderValue.toInt().coerceIn(0, pageCount - 1)
+                                scope.launch { listState.animateScrollToItem(target) }
+                                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            },
+                            valueRange = 0f..(pageCount - 1).toFloat().coerceAtLeast(0f),
+                            modifier = Modifier.weight(1f),
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.primary,
+                                activeTrackColor = MaterialTheme.colorScheme.primary,
+                                inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
+                        )
+
+                        Text(
+                            text = "$pageCount",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White.copy(alpha = 0.6f)
+                        )
+                    }
+
+                    // Zoom slider
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        Text("Zoom", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.5f))
+                        Slider(
+                            value = scale,
+                            onValueChange = {
+                                scale = it
+                                if (scale <= 1f) offset = Offset.Zero
+                            },
+                            valueRange = 1f..4f,
+                            steps = 5,
+                            modifier = Modifier.weight(1f),
+                            colors = SliderDefaults.colors(
+                                thumbColor = MaterialTheme.colorScheme.tertiary,
+                                activeTrackColor = MaterialTheme.colorScheme.tertiary,
+                                inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+                            )
+                        )
+                        Text("${(scale * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.5f))
+                    }
+                }
+            }
+        }
+
+        // ── Floating mini FABs ──
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 16.dp, bottom = if (pageCount > 1) 150.dp else 24.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SmallFloatingActionButton(
+                onClick = { isNightMode = !isNightMode },
+                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+            ) {
+                Icon(
+                    if (isNightMode) Icons.Default.LightMode else Icons.Default.DarkMode,
+                    "Night mode",
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }
@@ -315,22 +628,22 @@ fun PdfPage(
     pageIndex: Int,
     isNightMode: Boolean,
     isBookmarked: Boolean,
+    cache: PdfPageBitmapCache,
     onToggleBookmark: () -> Unit
 ) {
-    var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var bitmap by remember(pageIndex) { mutableStateOf(cache.get(pageIndex)) }
 
     LaunchedEffect(pageIndex) {
-        withContext(Dispatchers.Default) {
-            synchronized(renderer) {
-                val page = renderer.openPage(pageIndex)
-                val width = page.width * 2 // High quality
-                val height = page.height * 2
-                val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                // Render with white background for night mode inversion to work correctly
-                bmp.eraseColor(android.graphics.Color.WHITE)
-                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                page.close()
-                bitmap = bmp
+        if (bitmap == null) {
+            withContext(Dispatchers.Default) {
+                val cached = cache.get(pageIndex)
+                if (cached != null) {
+                    bitmap = cached
+                } else {
+                    val rendered = renderPdfPage(renderer, pageIndex)
+                    cache.put(pageIndex, rendered)
+                    bitmap = rendered
+                }
             }
         }
     }
@@ -399,5 +712,47 @@ fun PdfPage(
         contentAlignment = Alignment.Center
     ) {
         CircularProgressIndicator()
+    }
+}
+
+class PdfPageBitmapCache(
+    maxSizeBytes: Int = (Runtime.getRuntime().maxMemory() / 10L).coerceAtMost(48L * 1024L * 1024L).toInt()
+) {
+    private val cache = object : LruCache<Int, Bitmap>(maxSizeBytes) {
+        override fun sizeOf(key: Int, value: Bitmap): Int = value.allocationByteCount
+    }
+
+    fun get(pageIndex: Int): Bitmap? = cache.get(pageIndex)
+
+    fun put(pageIndex: Int, bitmap: Bitmap) {
+        cache.put(pageIndex, bitmap)
+    }
+
+    fun clear() {
+        cache.evictAll()
+    }
+}
+
+private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int): Bitmap {
+    synchronized(renderer) {
+        val page = renderer.openPage(pageIndex)
+        try {
+            // Cap rendered size to avoid OOM — 2048px max on longest edge is plenty for phones
+            val maxDim = 2048
+            val scale = if (page.width > page.height) {
+                maxDim.toFloat() / page.width
+            } else {
+                maxDim.toFloat() / page.height
+            }.coerceAtMost(2f) // Never exceed 2x native
+
+            val width = (page.width * scale).toInt()
+            val height = (page.height * scale).toInt()
+            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565) // 2 bytes/pixel instead of 4
+            bmp.eraseColor(android.graphics.Color.WHITE)
+            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            return bmp
+        } finally {
+            page.close()
+        }
     }
 }

@@ -54,6 +54,7 @@ data class GutendexBook(
             epubUrl != null -> epubUrl!! to BookFormat.EPUB
             pdfUrl != null -> pdfUrl!! to BookFormat.PDF
             textUrl != null -> textUrl!! to BookFormat.TXT
+            htmlUrl != null -> htmlUrl!! to BookFormat.HTML
             else -> null
         }
     }

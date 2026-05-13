@@ -8,6 +8,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.theblankstate.libri.data.RecommendationSeeds
 import com.theblankstate.libri.data.UserPreferencesRepository
+import com.theblankstate.libri.data_retrieval.repository
 import com.theblankstate.libri.data_retrieval.retrofitinatance
 import com.theblankstate.libri.data_retrieval.DownloadsRepository
 import com.theblankstate.libri.data_retrieval.DownloadNotificationManager
@@ -15,7 +16,9 @@ import com.theblankstate.libri.data_retrieval.DownloadCancelReceiver
 import com.theblankstate.libri.datamodel.BookFormat
 import com.theblankstate.libri.datamodel.BookSource
 import com.theblankstate.libri.datamodel.DownloadedBook
+import com.theblankstate.libri.datamodel.GutendexAuthor
 import com.theblankstate.libri.datamodel.GutendexBook
+import com.theblankstate.libri.datamodel.bookModel
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -155,12 +158,11 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                 currentPage++
                 _searchError.value = null
             } catch (e: java.net.SocketTimeoutException) {
-                _searchError.value = "Connection timed out. Please try again."
-                // Keep existing results if any
+                loadOpenLibraryGutenbergSearchFallback(query, e)
             } catch (e: java.io.IOException) {
-                _searchError.value = "Network error. Please check your connection."
+                loadOpenLibraryGutenbergSearchFallback(query, e)
             } catch (e: Exception) {
-                _searchError.value = "Search failed. Please try again."
+                loadOpenLibraryGutenbergSearchFallback(query, e)
             } finally {
                 _isSearching.value = false
             }
@@ -189,11 +191,17 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                 _searchResults.value = results
                 _searchError.value = null
             } catch (e: java.net.SocketTimeoutException) {
-                _searchError.value = "Connection timed out. Please try again."
+                val fallback = searchProjectGutenbergViaOpenLibrary(topic = topic, limit = 24)
+                _searchResults.value = fallback
+                _searchError.value = if (fallback.isEmpty()) "Connection timed out. Please try again." else null
             } catch (e: java.io.IOException) {
-                _searchError.value = "Network error. Please check your connection."
+                val fallback = searchProjectGutenbergViaOpenLibrary(topic = topic, limit = 24)
+                _searchResults.value = fallback
+                _searchError.value = if (fallback.isEmpty()) "Network error. Please check your connection." else null
             } catch (e: Exception) {
-                _searchError.value = "Topic search failed. Please try again."
+                val fallback = searchProjectGutenbergViaOpenLibrary(topic = topic, limit = 24)
+                _searchResults.value = fallback
+                _searchError.value = if (fallback.isEmpty()) "Topic search failed. Please try again." else null
             } finally {
                 _isSearching.value = false
             }
@@ -261,7 +269,12 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                     .ifTooSmallThen(resolvedResponse.results)
                 popularNextPageUrl = resolvedResponse.next ?: response.next
             } catch (e: Exception) {
-                // Silently fail, keep existing data
+                Log.e("GutenbergViewModel", "Gutendex popular load failed; using Open Library fallback", e)
+                val fallback = searchProjectGutenbergViaOpenLibrary(limit = 24)
+                if (fallback.isNotEmpty()) {
+                    _popularBooks.value = fallback
+                    popularNextPageUrl = null
+                }
             } finally {
                 _isLoadingPopular.value = false
             }
@@ -308,11 +321,14 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                     isLoading = false
                 )
             } catch (e: Exception) {
+                Log.e("GutenbergViewModel", "Gutendex recommendations failed; using Open Library fallback", e)
+                val fallback = searchProjectGutenbergViaOpenLibrary(topic = topic, limit = 18)
                 _recommendationState.value = GutenbergRecommendationState(
+                    books = fallback,
                     headline = RecommendationSeeds.gutenbergHeadline(selectedGenres, selectedLanguages),
                     subtitle = RecommendationSeeds.gutenbergSubtitle(selectedGenres, selectedLanguages),
                     isLoading = false,
-                    error = "Could not load Gutenberg recommendations."
+                    error = if (fallback.isEmpty()) "Could not load Gutenberg recommendations." else null
                 )
             }
         }
@@ -366,7 +382,8 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
             }
         } catch (e: Exception) {
             topicNextPageUrl = null
-            emptyList()
+            Log.e("GutenbergViewModel", "Gutendex topic load failed; using Open Library fallback for $topic", e)
+            searchProjectGutenbergViaOpenLibrary(topic = topic, limit = 24)
         }
     }
     
@@ -398,7 +415,8 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
                 val book = gutendexApi.getBook(id)
                 _selectedBook.value = book
             } catch (e: Exception) {
-                // Handle error
+                Log.e("GutenbergViewModel", "Gutendex getBook failed; using generated Gutenberg fallback for $id", e)
+                _selectedBook.value = getProjectGutenbergBookViaOpenLibrary(id) ?: generatedGutenbergBook(id)
             }
         }
     }
@@ -431,6 +449,97 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun List<GutendexBook>.ifTooSmallThen(fallback: List<GutendexBook>): List<GutendexBook> {
         return if (size >= 6) this else (this + fallback).distinctBy { it.id }
+    }
+
+    private suspend fun loadOpenLibraryGutenbergSearchFallback(query: String, cause: Exception) {
+        Log.e("GutenbergViewModel", "Gutendex search failed; using Open Library fallback for query=$query", cause)
+        val fallback = searchProjectGutenbergViaOpenLibrary(search = query, limit = 24)
+        _searchResults.value = fallback
+        _searchError.value = if (fallback.isEmpty()) {
+            "Gutenberg search is temporarily unavailable."
+        } else {
+            null
+        }
+        hasMoreResults = false
+        _hasMoreSearchResults.value = false
+    }
+
+    private suspend fun searchProjectGutenbergViaOpenLibrary(
+        search: String? = null,
+        topic: String? = null,
+        limit: Int = 20
+    ): List<GutendexBook> = withContext(Dispatchers.IO) {
+        runCatching {
+            val queryParts = listOfNotNull(
+                search?.takeIf { it.isNotBlank() },
+                topic?.takeIf { it.isNotBlank() },
+                "id_project_gutenberg:[* TO *]"
+            )
+            repository.getbooks(
+                query = queryParts.joinToString(" "),
+                sort = if (search.isNullOrBlank() && topic.isNullOrBlank()) "trending" else null,
+                limit = limit
+            )
+                .mapNotNull { it.toGutendexFallback() }
+                .distinctBy { it.id }
+        }.onFailure { error ->
+            Log.e("GutenbergViewModel", "Open Library Gutenberg fallback failed", error)
+        }.getOrDefault(emptyList())
+    }
+
+    private suspend fun getProjectGutenbergBookViaOpenLibrary(id: Int): GutendexBook? = withContext(Dispatchers.IO) {
+        runCatching {
+            repository.getbooks(
+                query = "id_project_gutenberg:$id",
+                limit = 1
+            ).firstOrNull()?.toGutendexFallback()
+        }.getOrNull()
+    }
+
+    private fun bookModel.toGutendexFallback(): GutendexBook? {
+        val gutenbergId = id_project_gutenberg
+            ?.firstNotNullOfOrNull { raw -> raw.toIntOrNull() }
+            ?: return null
+        val cover = coverUrl ?: "https://www.gutenberg.org/cache/epub/$gutenbergId/pg$gutenbergId.cover.medium.jpg"
+        return GutendexBook(
+            id = gutenbergId,
+            title = title,
+            authors = author_name?.map { GutendexAuthor(it, null, null) },
+            translators = emptyList(),
+            subjects = subject,
+            bookshelves = emptyList(),
+            languages = language,
+            copyright = false,
+            mediaType = "Text",
+            formats = projectGutenbergFormats(gutenbergId, cover),
+            downloadCount = null
+        )
+    }
+
+    private fun generatedGutenbergBook(id: Int): GutendexBook {
+        val cover = "https://www.gutenberg.org/cache/epub/$id/pg$id.cover.medium.jpg"
+        return GutendexBook(
+            id = id,
+            title = "Project Gutenberg #$id",
+            authors = emptyList(),
+            translators = emptyList(),
+            subjects = emptyList(),
+            bookshelves = emptyList(),
+            languages = listOf("en"),
+            copyright = false,
+            mediaType = "Text",
+            formats = projectGutenbergFormats(id, cover),
+            downloadCount = null
+        )
+    }
+
+    private fun projectGutenbergFormats(id: Int, coverUrl: String): Map<String, String> {
+        return mapOf(
+            "image/jpeg" to coverUrl,
+            "application/epub+zip" to "https://www.gutenberg.org/ebooks/$id.epub.images",
+            "text/html; charset=utf-8" to "https://www.gutenberg.org/ebooks/$id.html.images",
+            "text/plain; charset=utf-8" to "https://www.gutenberg.org/ebooks/$id.txt.utf-8"
+        )
     }
     
     /**
@@ -500,6 +609,30 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
         }
         
         downloadJobs[book.id] = job
+    }
+
+    fun downloadBookById(
+        gutenbergId: Int,
+        onSuccess: (DownloadedBook) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        if (_downloadingBookIds.value.contains(gutenbergId)) {
+            Toast.makeText(context, "This book is already downloading", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                val book = withContext(Dispatchers.IO) {
+                    gutendexApi.getBook(gutenbergId)
+                }
+                downloadBook(book, onSuccess, onError)
+            } catch (e: Exception) {
+                val message = e.message ?: "Could not find a downloadable Gutenberg edition"
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                onError(message)
+            }
+        }
     }
     
     /**

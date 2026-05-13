@@ -28,13 +28,16 @@ data class bookModel(
     val id_librivox: List<String>? = null,
     val isbn: List<String>? = null,
     val publisher: List<String>? = null,
-    val publish_date: String? = null,
+    val publish_date: List<String>? = null,
     val number_of_pages: Int? = null,
     val dewey_decimal_class: List<String>? = null,
     val lcc_number: List<String>? = null
 ) {
     val coverUrl: String?
         get() = cover_i?.let { "https://covers.openlibrary.org/b/id/${it}-L.jpg" }
+
+    val displayPublishDate: String?
+        get() = publish_date?.firstOrNull()
 }
 
 data class SearchResponse(

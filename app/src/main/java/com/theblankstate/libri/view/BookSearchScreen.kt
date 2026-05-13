@@ -1,8 +1,11 @@
 package com.theblankstate.libri.view
 
 import android.app.Application
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,13 +27,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LocalLibrary
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
@@ -46,18 +53,22 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,13 +76,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.theblankstate.libri.data.LibraryRepository
+import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.datamodel.GutendexBook
+import com.theblankstate.libri.datamodel.LibraryBook
+import com.theblankstate.libri.datamodel.ReadingStatus
 import com.theblankstate.libri.datamodel.SearchSource
 import com.theblankstate.libri.datamodel.bookModel
 import com.theblankstate.libri.states.state
@@ -79,8 +95,11 @@ import com.theblankstate.libri.view.components.ExpressiveLoadingIndicator
 import com.theblankstate.libri.viewModel.BookViewModel
 import com.theblankstate.libri.viewModel.GutenbergViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun BookSearchScreen(
     viewModel: BookViewModel = viewModel(),
@@ -92,6 +111,10 @@ fun BookSearchScreen(
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
+    val uriHandler = LocalUriHandler.current
+    val userPreferencesRepository = remember(context) { UserPreferencesRepository(context) }
+    val libraryRepository = remember { LibraryRepository() }
     val gutenbergViewModel: GutenbergViewModel = viewModel(
         factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
             context.applicationContext as Application
@@ -116,6 +139,23 @@ fun BookSearchScreen(
     var submittedQuery by remember { mutableStateOf("") }
     var autoSearchQuery by remember { mutableStateOf("") }
     var selectedSource by remember { mutableStateOf(SearchSource.ALL) }
+    var quickActionTarget by remember { mutableStateOf<SearchQuickActionTarget?>(null) }
+
+    fun saveToLibrary(book: LibraryBook) {
+        val uid = userPreferencesRepository.getGoogleUser().third
+        if (uid == null) {
+            Toast.makeText(context, "Sign in to save books to your library", Toast.LENGTH_SHORT).show()
+            return
+        }
+        scope.launch {
+            val result = libraryRepository.addBookToLibrary(uid, book)
+            Toast.makeText(
+                context,
+                if (result.isSuccess) "Saved to library" else "Could not save this book",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     fun collapseSearch() {
         active = false
@@ -126,12 +166,12 @@ fun BookSearchScreen(
         val cleaned = rawQuery.trim()
         if (cleaned.length < 2) return
         submittedQuery = cleaned
-        if (selectedSource == SearchSource.ALL || selectedSource == SearchSource.OPEN_LIBRARY) {
+        if (selectedSource.usesOpenLibrary()) {
             viewModel.fetchBooksByQuery(cleaned)
         } else {
             viewModel.clearSearchResults()
         }
-        if (selectedSource == SearchSource.ALL || selectedSource == SearchSource.GUTENBERG) {
+        if (selectedSource.usesGutenberg()) {
             gutenbergViewModel.searchBooks(cleaned)
         } else {
             gutenbergViewModel.clearSearch()
@@ -172,11 +212,12 @@ fun BookSearchScreen(
         }
     }
 
-    val openLibraryBooks = if (bookState is state.success) {
+    val rawOpenLibraryBooks = if (bookState is state.success) {
         (bookState as state.success).data
     } else {
         emptyList()
     }
+    val openLibraryBooks = rawOpenLibraryBooks.filterForSource(selectedSource)
     val openLibraryLoading = submittedQuery.isNotBlank() && bookState is state.loading
     val openLibraryError = if (submittedQuery.isNotBlank() && bookState is state.error) {
         (bookState as state.error).message
@@ -241,18 +282,16 @@ fun BookSearchScreen(
                 )
             }
 
-            Row(
+            FlowRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                SourceChip("All", selectedSource == SearchSource.ALL) { selectedSource = SearchSource.ALL }
-                SourceChip("Open Library", selectedSource == SearchSource.OPEN_LIBRARY) { selectedSource = SearchSource.OPEN_LIBRARY }
-                SourceChip("Gutenberg", selectedSource == SearchSource.GUTENBERG) { selectedSource = SearchSource.GUTENBERG }
-
-                Spacer(modifier = Modifier.weight(1f))
+                SearchSource.entries.forEach { source ->
+                    SourceChip(source.label, selectedSource == source) { selectedSource = source }
+                }
 
                 TextButton(
                     onClick = onAdvancedSearchClick,
@@ -327,11 +366,11 @@ fun BookSearchScreen(
                         )
                     }
 
-                    if (selectedSource == SearchSource.ALL || selectedSource == SearchSource.OPEN_LIBRARY) {
+                    if (selectedSource.usesOpenLibrary()) {
                         item("open_library_header") {
                             ResultSectionHeader(
-                                title = "Open Library",
-                                subtitle = "Catalog matches, online reads, editions",
+                                title = selectedSource.openLibrarySectionTitle(),
+                                subtitle = selectedSource.openLibrarySectionSubtitle(),
                                 count = openLibraryBooks.size,
                                 isLoading = openLibraryLoading
                             )
@@ -350,7 +389,7 @@ fun BookSearchScreen(
                             }
                             openLibraryBooks.isEmpty() -> {
                                 item("open_library_empty") {
-                                    EmptySourceRow("No Open Library matches yet.")
+                                    EmptySourceRow("No ${selectedSource.label} matches yet.")
                                 }
                             }
                             else -> {
@@ -368,11 +407,14 @@ fun BookSearchScreen(
                                                     book.coverUrl
                                                 )
                                             }
+                                        },
+                                        onCoverLongPress = {
+                                            quickActionTarget = SearchQuickActionTarget.OpenLibrary(book)
                                         }
                                     )
                                 }
 
-                                if (openLibraryBooks.size >= 20) {
+                                if (rawOpenLibraryBooks.size >= 20 && selectedSource != SearchSource.STANDARD_EBOOKS && selectedSource != SearchSource.LIBRIVOX) {
                                     item("open_library_more") {
                                         LoadMoreButton(
                                             text = "More from Open Library",
@@ -385,7 +427,7 @@ fun BookSearchScreen(
                         }
                     }
 
-                    if (selectedSource == SearchSource.ALL || selectedSource == SearchSource.GUTENBERG) {
+                    if (selectedSource.usesGutenberg()) {
                         item("gutenberg_header") {
                             ResultSectionHeader(
                                 title = "Project Gutenberg",
@@ -420,7 +462,10 @@ fun BookSearchScreen(
                                         onDownloadClick = { gutenbergViewModel.downloadBook(book) },
                                         isDownloading = gutDownloadingBookIds.contains(book.id),
                                         downloadProgress = gutDownloadProgress[book.id] ?: 0f,
-                                        isDownloaded = gutenbergViewModel.isBookDownloaded(book.id)
+                                        isDownloaded = gutenbergViewModel.isBookDownloaded(book.id),
+                                        onCoverLongPress = {
+                                            quickActionTarget = SearchQuickActionTarget.Gutenberg(book)
+                                        }
                                     )
                                 }
 
@@ -437,6 +482,67 @@ fun BookSearchScreen(
                         }
                     }
                 }
+            }
+        }
+
+        quickActionTarget?.let { target ->
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { quickActionTarget = null },
+                sheetState = sheetState
+            ) {
+                SearchQuickActionSheet(
+                    target = target,
+                    onDismiss = { quickActionTarget = null },
+                    onOpenDetails = {
+                        quickActionTarget = null
+                        when (target) {
+                            is SearchQuickActionTarget.OpenLibrary -> target.book.key?.let(onBookClick)
+                            is SearchQuickActionTarget.Gutenberg -> onGutenbergClick(target.book)
+                        }
+                    },
+                    onRead = {
+                        quickActionTarget = null
+                        when (target) {
+                            is SearchQuickActionTarget.OpenLibrary -> {
+                                val iaId = target.book.ia?.firstOrNull()
+                                if (iaId != null) {
+                                    onReadClick(
+                                        iaId,
+                                        target.book.title,
+                                        target.book.author_name?.firstOrNull(),
+                                        target.book.coverUrl
+                                    )
+                                }
+                            }
+                            is SearchQuickActionTarget.Gutenberg -> onReadGutenbergClick(target.book)
+                        }
+                    },
+                    onSave = {
+                        quickActionTarget = null
+                        val libraryBook = when (target) {
+                            is SearchQuickActionTarget.OpenLibrary -> target.book.toLibraryBook()
+                            is SearchQuickActionTarget.Gutenberg -> target.book.toLibraryBook()
+                        }
+                        saveToLibrary(libraryBook)
+                    },
+                    onDownload = {
+                        quickActionTarget = null
+                        when (target) {
+                            is SearchQuickActionTarget.OpenLibrary -> {
+                                val gutenbergId = target.book.id_project_gutenberg?.firstOrNull()?.toIntOrNull()
+                                if (gutenbergId != null) {
+                                    gutenbergViewModel.downloadBookById(gutenbergId)
+                                }
+                            }
+                            is SearchQuickActionTarget.Gutenberg -> gutenbergViewModel.downloadBook(target.book)
+                        }
+                    },
+                    onOpenExternal = { url ->
+                        quickActionTarget = null
+                        uriHandler.openUri(url)
+                    }
+                )
             }
         }
     }
@@ -457,6 +563,154 @@ private fun SourceChip(
         } else {
             null
         }
+    )
+}
+
+private sealed class SearchQuickActionTarget {
+    data class OpenLibrary(val book: bookModel) : SearchQuickActionTarget()
+    data class Gutenberg(val book: GutendexBook) : SearchQuickActionTarget()
+}
+
+@Composable
+private fun SearchQuickActionSheet(
+    target: SearchQuickActionTarget,
+    onDismiss: () -> Unit,
+    onOpenDetails: () -> Unit,
+    onRead: () -> Unit,
+    onSave: () -> Unit,
+    onDownload: () -> Unit,
+    onOpenExternal: (String) -> Unit
+) {
+    val title = when (target) {
+        is SearchQuickActionTarget.OpenLibrary -> target.book.title
+        is SearchQuickActionTarget.Gutenberg -> target.book.title
+    }
+    val author = when (target) {
+        is SearchQuickActionTarget.OpenLibrary -> target.book.author_name?.joinToString(", ") ?: "Unknown Author"
+        is SearchQuickActionTarget.Gutenberg -> target.book.authorNames
+    }
+    val canRead = when (target) {
+        is SearchQuickActionTarget.OpenLibrary -> target.book.has_fulltext == true && !target.book.ia.isNullOrEmpty()
+        is SearchQuickActionTarget.Gutenberg -> target.book.getBestDownloadFormat() != null
+    }
+    val canDownload = when (target) {
+        is SearchQuickActionTarget.OpenLibrary -> target.book.id_project_gutenberg?.firstOrNull()?.toIntOrNull() != null
+        is SearchQuickActionTarget.Gutenberg -> target.book.getBestDownloadFormat() != null
+    }
+    val standardEbooksId = (target as? SearchQuickActionTarget.OpenLibrary)
+        ?.book
+        ?.id_standard_ebooks
+        ?.firstOrNull()
+    val librivoxId = (target as? SearchQuickActionTarget.OpenLibrary)
+        ?.book
+        ?.id_librivox
+        ?.firstOrNull()
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            text = author,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        HorizontalDivider()
+
+        QuickActionRow(
+            icon = Icons.Default.OpenInNew,
+            title = "Open details",
+            subtitle = "See editions, identifiers, and recommendations",
+            onClick = onOpenDetails
+        )
+        QuickActionRow(
+            icon = Icons.Default.BookmarkAdd,
+            title = "Save to library",
+            subtitle = "Adds it to Want to Read",
+            onClick = onSave
+        )
+        if (canRead) {
+            QuickActionRow(
+                icon = Icons.Default.AutoStories,
+                title = "Read in app",
+                subtitle = if (target is SearchQuickActionTarget.Gutenberg) {
+                    "Uses the best available EPUB, PDF, text, or HTML format"
+                } else {
+                    "Opens the Internet Archive embedded reader"
+                },
+                onClick = onRead
+            )
+        }
+        if (canDownload) {
+            QuickActionRow(
+                icon = Icons.Default.Download,
+                title = "Download",
+                subtitle = if (target is SearchQuickActionTarget.OpenLibrary) {
+                    "Uses the linked Project Gutenberg edition"
+                } else {
+                    "Saves the best available free format"
+                },
+                onClick = onDownload
+            )
+        }
+        if (!standardEbooksId.isNullOrBlank()) {
+            QuickActionRow(
+                icon = Icons.Default.Language,
+                title = "Open Standard Ebooks",
+                subtitle = "Beautiful public-domain edition on the source site",
+                onClick = { onOpenExternal("https://standardebooks.org/ebooks/$standardEbooksId") }
+            )
+        }
+        if (!librivoxId.isNullOrBlank()) {
+            val encoded = URLEncoder.encode(librivoxId, StandardCharsets.UTF_8.toString())
+            QuickActionRow(
+                icon = Icons.Default.Language,
+                title = "Open LibriVox",
+                subtitle = "Public-domain audiobook source",
+                onClick = { onOpenExternal("https://librivox.org/search?q=$encoded&search_form=advanced") }
+            )
+        }
+        TextButton(
+            onClick = onDismiss,
+            modifier = Modifier.align(Alignment.End)
+        ) {
+            Text("Close")
+        }
+    }
+}
+
+@Composable
+private fun QuickActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    ListItem(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        leadingContent = {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+        },
+        headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
+        supportingContent = { Text(subtitle, maxLines = 2, overflow = TextOverflow.Ellipsis) }
     )
 }
 
@@ -760,10 +1014,12 @@ private fun ResultSectionHeader(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun OpenLibraryResultCard(
     book: bookModel,
     onClick: () -> Unit,
-    onReadClick: () -> Unit
+    onReadClick: () -> Unit,
+    onCoverLongPress: () -> Unit
 ) {
     ElevatedCard(
         modifier = Modifier
@@ -783,6 +1039,10 @@ private fun OpenLibraryResultCard(
                     .width(78.dp)
                     .height(116.dp)
                     .clip(MaterialTheme.shapes.medium)
+                    .combinedClickable(
+                        onClick = onClick,
+                        onLongClick = onCoverLongPress
+                    )
             )
 
             Column(
@@ -829,6 +1089,7 @@ private fun OpenLibraryResultCard(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun GutenbergResultCard(
     book: GutendexBook,
     onClick: () -> Unit,
@@ -836,7 +1097,8 @@ private fun GutenbergResultCard(
     onDownloadClick: () -> Unit,
     isDownloading: Boolean,
     downloadProgress: Float,
-    isDownloaded: Boolean
+    isDownloaded: Boolean,
+    onCoverLongPress: () -> Unit
 ) {
     ElevatedCard(
         modifier = Modifier
@@ -856,6 +1118,10 @@ private fun GutenbergResultCard(
                     .width(78.dp)
                     .height(116.dp)
                     .clip(MaterialTheme.shapes.medium)
+                    .combinedClickable(
+                        onClick = onClick,
+                        onLongClick = onCoverLongPress
+                    )
             )
 
             Column(
@@ -988,6 +1254,76 @@ private fun CoverImage(
             )
         }
     }
+}
+
+private fun SearchSource.usesOpenLibrary(): Boolean {
+    return this != SearchSource.GUTENBERG
+}
+
+private fun SearchSource.usesGutenberg(): Boolean {
+    return this == SearchSource.ALL || this == SearchSource.GUTENBERG || this == SearchSource.READABLE
+}
+
+private fun SearchSource.openLibrarySectionTitle(): String {
+    return when (this) {
+        SearchSource.STANDARD_EBOOKS -> "Standard Ebooks"
+        SearchSource.LIBRIVOX -> "LibriVox"
+        SearchSource.READABLE -> "Readable Books"
+        else -> "Open Library"
+    }
+}
+
+private fun SearchSource.openLibrarySectionSubtitle(): String {
+    return when (this) {
+        SearchSource.STANDARD_EBOOKS -> "Open Library records linked to Standard Ebooks"
+        SearchSource.LIBRIVOX -> "Open Library records linked to LibriVox audiobooks"
+        SearchSource.READABLE -> "Books with full text or linked public-domain editions"
+        else -> "Catalog matches, online reads, editions"
+    }
+}
+
+private fun List<bookModel>.filterForSource(source: SearchSource): List<bookModel> {
+    return when (source) {
+        SearchSource.STANDARD_EBOOKS -> filter { !it.id_standard_ebooks.isNullOrEmpty() }
+        SearchSource.LIBRIVOX -> filter { !it.id_librivox.isNullOrEmpty() }
+        SearchSource.READABLE -> filter { book ->
+            book.has_fulltext == true ||
+                book.ebook_access == "public" ||
+                !book.id_project_gutenberg.isNullOrEmpty() ||
+                !book.id_standard_ebooks.isNullOrEmpty()
+        }
+        else -> this
+    }
+}
+
+private fun bookModel.toLibraryBook(): LibraryBook {
+    return LibraryBook(
+        id = key?.substringAfterLast("/") ?: title.hashCode().toString(),
+        title = title,
+        author = author_name?.firstOrNull() ?: "Unknown Author",
+        coverUrl = coverUrl,
+        isbn = isbn?.firstOrNull(),
+        openLibraryId = key,
+        internetArchiveId = ia?.firstOrNull(),
+        gutenbergId = id_project_gutenberg?.firstOrNull()?.toIntOrNull(),
+        ebookAccess = ebook_access,
+        status = ReadingStatus.WANT_TO_READ.name,
+        publisher = publisher?.firstOrNull(),
+        totalPages = number_of_pages ?: 0
+    )
+}
+
+private fun GutendexBook.toLibraryBook(): LibraryBook {
+    return LibraryBook(
+        id = "gutenberg_$id",
+        title = title,
+        author = authorNames,
+        coverUrl = coverUrl,
+        description = subjects?.joinToString(", ")?.take(500),
+        gutenbergId = id,
+        ebookAccess = "public",
+        status = ReadingStatus.WANT_TO_READ.name
+    )
 }
 
 @Composable

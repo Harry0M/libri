@@ -42,6 +42,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.theblankstate.libri.viewModel.GutenbergViewModel
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.CheckCircle
+import com.theblankstate.libri.datamodel.ArchiveDownloadOption
+import com.theblankstate.libri.datamodel.BookFormat
 
 @Composable
 fun BookDetailScreen(
@@ -50,7 +53,8 @@ fun BookDetailScreen(
     onBookClick: (String) -> Unit,
     onSeeAllEditionsClick: (String) -> Unit = {},
     onReadClick: (String, String?, String?, String?) -> Unit = { _, _, _, _ -> },
-    onReadGutenbergBook: (Int, String, String, String?) -> Unit = { _, _, _, _ -> },
+    onReadGutenbergBook: (Int, String, String, String?, String?, BookFormat?) -> Unit = { _, _, _, _, _, _ -> },
+    onReadArchiveOption: (String, String?, String?, String?, ArchiveDownloadOption) -> Unit = { _, _, _, _, _ -> },
     isUserLoggedIn: Boolean,
     onBorrowConfirm: (String) -> Unit = {},
     onLoginRequired: () -> Unit = {}
@@ -67,6 +71,9 @@ fun BookDetailScreen(
     val editions by viewModel.editions.collectAsState()
     val ratings by viewModel.ratings.collectAsState()
     val bookshelves by viewModel.bookshelves.collectAsState()
+    val archiveDownloadOptions by viewModel.archiveDownloadOptions.collectAsState()
+    val isLoadingArchiveDownloadOptions by viewModel.isLoadingArchiveDownloadOptions.collectAsState()
+    val resolvedArchiveId by viewModel.resolvedArchiveIdentifier.collectAsState()
     val book = selectedBook
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
@@ -77,6 +84,10 @@ fun BookDetailScreen(
     var showSuccessSnackbar by remember { mutableStateOf(false) }
 
     val iaId = book?.ia?.firstOrNull()
+    val archiveIdentifier = remember(book, editions) {
+        book?.ia?.firstOrNull()
+            ?: editions.firstOrNull { !it.ocaid.isNullOrBlank() }?.ocaid
+    }
     val borrowKey = remember(book, editions) {
         book?.key?.takeIf { it.startsWith("/books/") }
             ?: book?.cover_edition_key?.takeIf { it.isNotBlank() }?.let { "/books/$it" }
@@ -114,6 +125,40 @@ fun BookDetailScreen(
             CircularProgressIndicator()
         }
         return
+    }
+
+    // Use cascading fallback — tries: primary IA id → edition ocaid → ISBN search → title search
+    LaunchedEffect(archiveIdentifier, editions, book.isbn, book.title) {
+        viewModel.loadArchiveDownloadOptionsWithFallback(
+            primaryIdentifier = archiveIdentifier,
+            editions = editions,
+            isbn = book.isbn,
+            title = book.title,
+            author = book.author_name?.firstOrNull()
+        )
+    }
+    // Use the resolved identifier (which may differ from archiveIdentifier if fallback found it)
+    val effectiveArchiveId = resolvedArchiveId ?: archiveIdentifier
+
+    val archiveLibraryBook = remember(book, workDetail, editions, archiveIdentifier) {
+        LibraryBook(
+            id = book.key?.substringAfterLast("/") ?: archiveIdentifier ?: book.title.hashCode().toString(),
+            title = book.title,
+            author = book.author_name?.firstOrNull() ?: "Unknown Author",
+            coverUrl = book.coverUrl,
+            description = workDetail?.getDescriptionText()?.take(500),
+            isbn = book.isbn?.firstOrNull(),
+            openLibraryId = book.key,
+            internetArchiveId = archiveIdentifier,
+            gutenbergId = book.id_project_gutenberg?.firstOrNull()?.toIntOrNull(),
+            ebookAccess = book.ebook_access ?: "public",
+            status = ReadingStatus.WANT_TO_READ.name,
+            dateAdded = System.currentTimeMillis(),
+            publisher = book.publisher?.firstOrNull(),
+            totalPages = book.number_of_pages
+                ?: editions.firstOrNull { (it.numberOfPages ?: 0) > 0 }?.numberOfPages
+                ?: 0
+        )
     }
 
     Scaffold(
@@ -291,9 +336,17 @@ fun BookDetailScreen(
                         .padding(horizontal = 24.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    val iaId = book.ia?.firstOrNull()
                     val isBorrowable = book.ebook_access == "borrowable"
                     val isPublic = book.ebook_access == "public" || book.has_fulltext == true
+
+                    // Smart Read Now — prefer native reader for downloadable formats
+                    val bestNativeOption = archiveDownloadOptions
+                        .firstOrNull { it.readerFormat == BookFormat.EPUB }
+                        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.PDF }
+                        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.TXT }
+                        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.HTML }
+                    val canReadNatively = bestNativeOption != null && effectiveArchiveId != null
+                    val canReadEmbedded = effectiveArchiveId != null
 
                     if (isBorrowable) {
                         Button(
@@ -313,22 +366,46 @@ fun BookDetailScreen(
                         }
                     } else {
                         Button(
-                            onClick = { 
-                                iaId?.let { id ->
+                            onClick = {
+                                if (canReadNatively) {
+                                    // Route to native EPUB/PDF/TXT reader
+                                    onReadArchiveOption(
+                                        effectiveArchiveId!!,
+                                        book.title,
+                                        book.author_name?.firstOrNull(),
+                                        book.coverUrl,
+                                        bestNativeOption!!
+                                    )
+                                } else if (canReadEmbedded) {
+                                    // Fallback to IA embedded web reader (never breaks)
                                     onReadClick(
-                                        id,
+                                        effectiveArchiveId!!,
                                         book.title,
                                         book.author_name?.firstOrNull(),
                                         book.coverUrl
                                     )
                                 }
                             },
-                            enabled = iaId != null,
+                            enabled = canReadNatively || canReadEmbedded || isLoadingArchiveDownloadOptions,
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(end = 8.dp)
                         ) {
-                            Text(text = "Read Now")
+                            if (isLoadingArchiveDownloadOptions) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                Text(
+                                    text = if (canReadNatively) {
+                                        "Read in App"
+                                    } else {
+                                        "Read Now"
+                                    }
+                                )
+                            }
                         }
                     }
 
@@ -360,11 +437,102 @@ fun BookDetailScreen(
                 val downloadProgress by gutenbergViewModel.downloadProgress.collectAsState()
                 val isDownloadingGutenberg = gutenbergId != null && downloadingBookIds.contains(gutenbergId)
                 val gutenbergProgress = gutenbergId?.let { downloadProgress[it] } ?: 0f
+                val libraryDownloadingBookIds by libraryViewModel.downloadingBookIds.collectAsState()
+                val libraryDownloadProgress by libraryViewModel.downloadProgressMap.collectAsState()
+                val isDownloadingArchiveOption = libraryDownloadingBookIds.contains(archiveLibraryBook.id)
+                val archiveDownloadProgress = libraryDownloadProgress[archiveLibraryBook.id] ?: 0f
                 
                 // Check if already downloaded
                 val isGutenbergDownloaded = gutenbergId?.let { gutenbergViewModel.isBookDownloaded(it) } ?: false
 
                 val hasExternalSources = gutenbergId != null || standardEbooksId != null || librivoxId != null
+
+                if (isLoadingArchiveDownloadOptions || archiveDownloadOptions.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 24.dp)
+                    ) {
+                        Text(
+                            text = "Internet Archive Downloads",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        if (isLoadingArchiveDownloadOptions) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "Checking available files...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+
+                        archiveDownloadOptions.forEach { option ->
+                            // Each option gets a unique download ID based on format
+                            val optionBookId = "${archiveLibraryBook.id}_${option.extension}"
+                            val optionBook = archiveLibraryBook.copy(id = optionBookId)
+                            val isThisOptionDownloading = libraryDownloadingBookIds.contains(optionBookId)
+                            val thisOptionProgress = libraryDownloadProgress[optionBookId] ?: 0f
+                            // Check if this specific option was already downloaded
+                            val isThisOptionDownloaded = remember(optionBookId) {
+                                libraryViewModel.isOptionDownloaded(optionBookId)
+                            }
+                            ArchiveDownloadOptionRow(
+                                option = option,
+                                isDownloading = isThisOptionDownloading,
+                                isDownloaded = isThisOptionDownloaded,
+                                downloadProgress = thisOptionProgress,
+                                onRead = {
+                                    effectiveArchiveId?.let { id ->
+                                        onReadArchiveOption(
+                                            id,
+                                            book.title,
+                                            book.author_name?.firstOrNull(),
+                                            book.coverUrl,
+                                            option
+                                        )
+                                    }
+                                },
+                                onDownload = {
+                                    val userId = uid
+                                    if (userId == null) {
+                                        onLoginRequired()
+                                    } else {
+                                        libraryViewModel.downloadArchiveOption(
+                                            uid = userId,
+                                            book = optionBook,
+                                            option = option,
+                                            onSuccess = { showSuccessSnackbar = true }
+                                        )
+                                    }
+                                },
+                                onCancel = { libraryViewModel.cancelDownload(optionBookId) },
+                                onOpenExternal = { uriHandler.openUri(option.url) }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+                }
 
                 if (hasExternalSources) {
                     Column(
@@ -429,6 +597,7 @@ fun BookDetailScreen(
                                     
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         if (isGutenbergDownloaded) {
+                                            val downloadedGutenbergBook = gutenbergViewModel.getDownloadedBook(id)
                                             // Read button if already downloaded
                                             Button(
                                                 onClick = {
@@ -436,7 +605,9 @@ fun BookDetailScreen(
                                                         id,
                                                         book.title,
                                                         book.author_name?.firstOrNull() ?: "Unknown",
-                                                        book.coverUrl
+                                                        book.coverUrl,
+                                                        downloadedGutenbergBook?.fileUri ?: downloadedGutenbergBook?.filePath,
+                                                        downloadedGutenbergBook?.format
                                                     )
                                                 }
                                             ) {
@@ -648,7 +819,7 @@ fun BookDetailScreen(
                                 book.publisher?.firstOrNull()?.let {
                                     MetadataItem(label = "Publisher", value = it, color = MaterialTheme.colorScheme.onSurface)
                                 }
-                                book.publish_date?.let {
+                                book.displayPublishDate?.let {
                                     MetadataItem(label = "Published", value = it, color = MaterialTheme.colorScheme.onSurface)
                                 }
                             }
@@ -960,6 +1131,149 @@ fun BookDetailScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ArchiveDownloadOptionRow(
+    option: ArchiveDownloadOption,
+    isDownloading: Boolean,
+    isDownloaded: Boolean,
+    downloadProgress: Float,
+    onRead: () -> Unit,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+    onOpenExternal: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Book,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = option.label,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    val detail = listOfNotNull(
+                        option.fileName,
+                        option.sizeBytes?.let { formatArchiveOptionSize(it) }
+                    ).joinToString(" • ")
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onOpenExternal) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = "Open file in browser",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (isDownloading) {
+                LinearProgressIndicator(
+                    progress = { downloadProgress.coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (option.canReadInApp) {
+                    TextButton(
+                        onClick = onRead,
+                        enabled = !isDownloading
+                    ) {
+                        Text("Read")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (isDownloaded) {
+                        // Already downloaded — show checkmark
+                        OutlinedButton(
+                            onClick = {},
+                            enabled = false
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Downloaded")
+                        }
+                    } else if (isDownloading) {
+                        OutlinedButton(onClick = onCancel) {
+                            Text("Cancel")
+                        }
+                    } else {
+                        Button(onClick = onDownload) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Download")
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "Open on archive.org",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedButton(onClick = onOpenExternal) {
+                        Text("Open")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatArchiveOptionSize(bytes: Long): String {
+    val mb = bytes / (1024f * 1024f)
+    return if (mb >= 1f) {
+        String.format("%.1f MB", mb)
+    } else {
+        "${(bytes / 1024f).toInt().coerceAtLeast(1)} KB"
     }
 }
 

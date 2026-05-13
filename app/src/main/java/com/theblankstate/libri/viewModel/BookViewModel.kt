@@ -4,10 +4,12 @@ import android.app.Application
 import android.content.SharedPreferences
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.theblankstate.libri.data.InternetArchiveRepository
 import com.theblankstate.libri.data.RecommendationSeeds
 import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.data_retrieval.repository
 import com.theblankstate.libri.datamodel.AdvancedSearchFilters
+import com.theblankstate.libri.datamodel.ArchiveDownloadOption
 import com.theblankstate.libri.datamodel.SortOption
 import com.theblankstate.libri.datamodel.WorkDetailModel
 import com.theblankstate.libri.datamodel.bookModel
@@ -15,6 +17,8 @@ import com.theblankstate.libri.states.state
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
  
 class BookViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -22,6 +26,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
         application.getSharedPreferences("search_history", android.content.Context.MODE_PRIVATE)
 
     private val bookRepository = repository
+    private val internetArchiveRepository = InternetArchiveRepository()
     private val userPreferencesRepository = UserPreferencesRepository(application)
 
     private val _bookState = MutableStateFlow<state>(state.loading)
@@ -47,6 +52,12 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _bookshelves = MutableStateFlow<com.theblankstate.libri.datamodel.BookshelfModel?>(null)
     val bookshelves: StateFlow<com.theblankstate.libri.datamodel.BookshelfModel?> = _bookshelves
+
+    private val _archiveDownloadOptions = MutableStateFlow<List<ArchiveDownloadOption>>(emptyList())
+    val archiveDownloadOptions: StateFlow<List<ArchiveDownloadOption>> = _archiveDownloadOptions
+
+    private val _isLoadingArchiveDownloadOptions = MutableStateFlow(false)
+    val isLoadingArchiveDownloadOptions: StateFlow<Boolean> = _isLoadingArchiveDownloadOptions
 
     private val _isLoadingMoreEditions = MutableStateFlow(false)
     val isLoadingMoreEditions: StateFlow<Boolean> = _isLoadingMoreEditions
@@ -465,6 +476,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
             _editions.value = emptyList()
             _ratings.value = null
             _bookshelves.value = null
+            _archiveDownloadOptions.value = emptyList()
 
             launch { _workDetail.value = bookRepository.getWorkDetails(workId) }
             launch { 
@@ -490,6 +502,131 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
             }
             launch { _ratings.value = bookRepository.getRatings(workId) }
             launch { _bookshelves.value = bookRepository.getBookshelves(workId) }
+        }
+    }
+
+    fun loadArchiveDownloadOptions(identifier: String?) {
+        if (identifier.isNullOrBlank()) {
+            _archiveDownloadOptions.value = emptyList()
+            return
+        }
+
+        viewModelScope.launch {
+            _isLoadingArchiveDownloadOptions.value = true
+            try {
+                _archiveDownloadOptions.value = internetArchiveRepository.getDownloadOptions(identifier)
+            } catch (e: Exception) {
+                _archiveDownloadOptions.value = emptyList()
+            } finally {
+                _isLoadingArchiveDownloadOptions.value = false
+            }
+        }
+    }
+
+    /**
+     * Intelligent cascading download options resolver.
+     * Tries multiple strategies to find downloadable files for a book:
+     *   1. Primary IA identifier (from book.ia)
+     *   2. Edition ocaid fields (from fetched editions)
+     *   3. ISBN-based Internet Archive search
+     *   4. Title+author Internet Archive search (last resort)
+     *
+     * Stops at the first strategy that returns valid options.
+     * The resolved identifier is emitted via [resolvedArchiveIdentifier].
+     */
+    private val _resolvedArchiveIdentifier = MutableStateFlow<String?>(null)
+    val resolvedArchiveIdentifier: StateFlow<String?> = _resolvedArchiveIdentifier
+
+    private var fallbackJob: kotlinx.coroutines.Job? = null
+    private var lastLoadedCacheKey: String? = null
+
+    fun loadArchiveDownloadOptionsWithFallback(
+        primaryIdentifier: String?,
+        editions: List<com.theblankstate.libri.datamodel.EditionModel>,
+        isbn: List<String>?,
+        title: String?,
+        author: String?
+    ) {
+        // Build a cache key from the book's identity
+        val cacheKey = "${primaryIdentifier}|${isbn?.firstOrNull()}|${title}"
+
+        // If we already have results for this exact book, skip the fetch
+        if (cacheKey == lastLoadedCacheKey && _archiveDownloadOptions.value.isNotEmpty()) {
+            return
+        }
+        // Also skip if we already searched this book and found nothing
+        if (cacheKey == lastLoadedCacheKey && !_isLoadingArchiveDownloadOptions.value) {
+            return
+        }
+
+        // Cancel any in-flight fallback from a previous book
+        fallbackJob?.cancel()
+        lastLoadedCacheKey = cacheKey
+        fallbackJob = viewModelScope.launch {
+            _isLoadingArchiveDownloadOptions.value = true
+            _resolvedArchiveIdentifier.value = null
+            _archiveDownloadOptions.value = emptyList()  // Clear stale data immediately
+
+            try {
+                withContext(Dispatchers.IO) {
+                    // Step 1: Try primary IA identifier
+                    if (!primaryIdentifier.isNullOrBlank()) {
+                        val options = internetArchiveRepository.getDownloadOptions(primaryIdentifier)
+                        if (options.isNotEmpty()) {
+                            _archiveDownloadOptions.value = options
+                            _resolvedArchiveIdentifier.value = primaryIdentifier
+                            return@withContext
+                        }
+                    }
+
+                    // Step 2: Try ocaid from each loaded edition
+                    for (edition in editions) {
+                        val ocaid = edition.ocaid
+                        if (!ocaid.isNullOrBlank() && ocaid != primaryIdentifier) {
+                            val options = internetArchiveRepository.getDownloadOptions(ocaid)
+                            if (options.isNotEmpty()) {
+                                _archiveDownloadOptions.value = options
+                                _resolvedArchiveIdentifier.value = ocaid
+                                return@withContext
+                            }
+                        }
+                    }
+
+                    // Step 3: Try ISBN-based search on Internet Archive
+                    val isbns = isbn?.take(3) ?: emptyList()
+                    for (isbnValue in isbns) {
+                        val iaId = internetArchiveRepository.searchByIsbn(isbnValue)
+                        if (iaId != null) {
+                            val options = internetArchiveRepository.getDownloadOptions(iaId)
+                            if (options.isNotEmpty()) {
+                                _archiveDownloadOptions.value = options
+                                _resolvedArchiveIdentifier.value = iaId
+                                return@withContext
+                            }
+                        }
+                    }
+
+                    // Step 4: Title + author search (last resort)
+                    if (!title.isNullOrBlank()) {
+                        val iaId = internetArchiveRepository.searchByTitleAuthor(title, author)
+                        if (iaId != null) {
+                            val options = internetArchiveRepository.getDownloadOptions(iaId)
+                            if (options.isNotEmpty()) {
+                                _archiveDownloadOptions.value = options
+                                _resolvedArchiveIdentifier.value = iaId
+                                return@withContext
+                            }
+                        }
+                    }
+
+                    // No downloadable source found from any strategy
+                    _archiveDownloadOptions.value = emptyList()
+                }
+            } catch (e: Exception) {
+                _archiveDownloadOptions.value = emptyList()
+            } finally {
+                _isLoadingArchiveDownloadOptions.value = false
+            }
         }
     }
 

@@ -23,11 +23,14 @@ import com.theblankstate.libri.data.ShelvesRepository
 import com.theblankstate.libri.data_retrieval.DownloadsRepository
 import com.theblankstate.libri.data_retrieval.repository
 import com.theblankstate.libri.data_retrieval.retrofitinatance
+import com.theblankstate.libri.datamodel.ArchiveDownloadOption
 import com.theblankstate.libri.datamodel.DownloadedBook
 import com.theblankstate.libri.datamodel.BookSource
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
 import com.theblankstate.libri.datamodel.BookFormat
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -40,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 sealed class LibraryUiState {
@@ -670,6 +674,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     /**
      * Check if a book can be downloaded (has IA id and is NOT borrowable)
      */
+    /**
+     * Check if a specific archive download option was already downloaded
+     */
+    fun isOptionDownloaded(optionBookId: String): Boolean {
+        return downloadsRepository.isBookDownloaded(optionBookId)
+    }
+
     fun canDownloadBook(book: LibraryBook): Boolean {
         val hasIaId = !book.internetArchiveId.isNullOrEmpty()
         val hasGutenbergId = book.gutenbergId != null
@@ -811,14 +822,30 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             showDownloadProgressNotification(book.id, book.title, 0)
             
             try {
-                val downloadUrl = "https://archive.org/download/$iaId/${iaId}.pdf"
-                val savedUri = downloadFromUrlWithProgress(downloadUrl, "${book.title}.pdf", book.id, book.title)
+                val archiveFile = findBestArchiveDownload(iaId)
+                if (archiveFile == null) {
+                    val errorMsg = "No downloadable public file found for this Internet Archive item"
+                    withContext(Dispatchers.Main) {
+                        showDownloadFailedNotification(book.id, book.title, errorMsg)
+                        Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                        onError(errorMsg)
+                    }
+                    return@launch
+                }
+                val filename = "${book.title.replace(Regex("[^a-zA-Z0-9.-]"), "_")}.${archiveFile.format.extension}"
+                val savedUri = downloadFromUrlWithProgress(
+                    url = archiveFile.url,
+                    filename = filename,
+                    bookId = book.id,
+                    bookTitle = book.title,
+                    mimeType = archiveFile.format.mimeType
+                )
                 
                 if (savedUri != null) {
                     // Update the library book with the local file path
                     val updatedBook = book.copy(
                         localFilePath = savedUri,
-                        localFileFormat = BookFormat.PDF
+                        localFileFormat = archiveFile.format
                     )
                     libraryRepository.addBookToLibrary(uid, updatedBook)
                     
@@ -830,7 +857,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         coverUrl = book.coverUrl,
                         filePath = savedUri,
                         fileUri = savedUri,
-                        format = BookFormat.PDF
+                        format = archiveFile.format
                     )
                     downloadsRepository.saveBook(downloadedBook)
                     
@@ -870,7 +897,155 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         // Store the job for cancellation support
         downloadJobs[book.id] = job
     }
+
+    fun downloadArchiveOption(
+        uid: String,
+        book: LibraryBook,
+        option: ArchiveDownloadOption,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        val format = option.readerFormat
+        if (format == null) {
+            val errorMsg = "${option.label} is available on Internet Archive, but this app cannot read it yet"
+            Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+            onError(errorMsg)
+            return
+        }
+
+        if (_downloadingBookIds.value.contains(book.id)) {
+            Toast.makeText(context, "${book.title} is already downloading", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val job = viewModelScope.launch {
+            _downloadingBookIds.value = _downloadingBookIds.value + book.id
+            _downloadProgressMap.value = _downloadProgressMap.value + (book.id to 0f)
+            showDownloadProgressNotification(book.id, book.title, 0)
+
+            try {
+                val filename = "${book.title.replace(Regex("[^a-zA-Z0-9.-]"), "_")}.${option.extension}"
+                val savedUri = downloadFromUrlWithProgress(
+                    url = option.url,
+                    filename = filename,
+                    bookId = book.id,
+                    bookTitle = book.title,
+                    mimeType = option.mimeType
+                )
+
+                if (savedUri != null) {
+                    val updatedBook = book.copy(
+                        localFilePath = savedUri,
+                        localFileFormat = format,
+                        ebookAccess = book.ebookAccess ?: "public"
+                    )
+                    libraryRepository.addBookToLibrary(uid, updatedBook)
+
+                    downloadsRepository.saveBook(
+                        DownloadedBook(
+                            id = book.id,
+                            title = book.title,
+                            author = book.author,
+                            coverUrl = book.coverUrl,
+                            filePath = savedUri,
+                            fileUri = savedUri,
+                            format = format,
+                            source = BookSource.ARCHIVE_ORG
+                        )
+                    )
+
+                    if (_selectedBook.value?.id == book.id) {
+                        _selectedBook.value = updatedBook
+                    }
+
+                    withContext(Dispatchers.Main) {
+                        showDownloadCompleteNotification(book.id, book.title)
+                        Toast.makeText(context, "Downloaded ${option.label}", Toast.LENGTH_SHORT).show()
+                        onSuccess()
+                    }
+                } else {
+                    val errorMsg = "Failed to download ${option.label}"
+                    withContext(Dispatchers.Main) {
+                        showDownloadFailedNotification(book.id, book.title, errorMsg)
+                        Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                        onError(errorMsg)
+                    }
+                }
+            } catch (e: Exception) {
+                val errorMsg = e.message ?: "Unknown download error"
+                withContext(Dispatchers.Main) {
+                    showDownloadFailedNotification(book.id, book.title, errorMsg)
+                    Toast.makeText(context, "Download failed: $errorMsg", Toast.LENGTH_LONG).show()
+                    onError(errorMsg)
+                }
+            } finally {
+                _downloadingBookIds.value = _downloadingBookIds.value - book.id
+                _downloadProgressMap.value = _downloadProgressMap.value - book.id
+                downloadJobs.remove(book.id)
+            }
+        }
+
+        downloadJobs[book.id] = job
+    }
     
+    private data class ArchiveDownloadFile(
+        val url: String,
+        val format: BookFormat
+    )
+
+    private suspend fun findBestArchiveDownload(iaId: String): ArchiveDownloadFile? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("https://archive.org/metadata/$iaId")
+                .header("User-Agent", "Libri/1.0 Android (https://github.com/Harry0M/libri)")
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val body = response.body?.string() ?: return@withContext null
+                val files = JsonParser.parseString(body)
+                    .asJsonObject
+                    .getAsJsonArray("files")
+                    ?: return@withContext null
+
+                val candidates = files.mapNotNull { element ->
+                    val file = element as? JsonObject ?: return@mapNotNull null
+                    val name = file.get("name")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    val label = file.get("format")?.asString.orEmpty().lowercase()
+                    val lowerName = name.lowercase()
+                    val format = when {
+                        lowerName.endsWith(".epub") || label.contains("epub") -> BookFormat.EPUB
+                        lowerName.endsWith(".pdf") || label.contains("pdf") -> BookFormat.PDF
+                        lowerName.endsWith(".txt") || label.contains("text") -> BookFormat.TXT
+                        lowerName.endsWith(".html") || lowerName.endsWith(".htm") || label.contains("html") -> BookFormat.HTML
+                        else -> null
+                    } ?: return@mapNotNull null
+
+                    if (lowerName.contains("_meta.") || lowerName.contains("_files.")) {
+                        return@mapNotNull null
+                    }
+
+                    ArchiveDownloadFile(
+                        url = "https://archive.org/download/$iaId/${encodeArchivePath(name)}",
+                        format = format
+                    )
+                }
+
+                listOf(BookFormat.EPUB, BookFormat.PDF, BookFormat.TXT, BookFormat.HTML)
+                    .firstNotNullOfOrNull { preferred -> candidates.firstOrNull { it.format == preferred } }
+            }
+        } catch (e: Exception) {
+            Log.e("LibraryViewModel", "Failed to resolve Internet Archive files for $iaId", e)
+            null
+        }
+    }
+
+    private fun encodeArchivePath(path: String): String {
+        return path.split("/").joinToString("/") { segment ->
+            URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+        }
+    }
+
     private suspend fun downloadFromUrlWithProgress(
         url: String,
         filename: String,

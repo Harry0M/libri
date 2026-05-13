@@ -3,6 +3,7 @@ package com.theblankstate.libri.data_retrieval
 import android.util.Log
 import com.theblankstate.libri.datamodel.WorkDetailModel
 import com.theblankstate.libri.datamodel.bookModel
+import retrofit2.HttpException
 
 object repository {
 
@@ -38,9 +39,17 @@ object repository {
             )
             response.docs
         } catch (e: Exception) {
-            Log.e(TAG, "getbooks failed: query=$query, title=$title", e)
+            val reason = when (e) {
+                is HttpException -> "HTTP ${e.code()} ${e.message()}"
+                else -> "${e::class.java.simpleName}: ${e.message}"
+            }
+            Log.e(
+                TAG,
+                "getbooks failed: query=$query, title=$title, author=$author, subject=$subject, isbn=$isbn, lang=$lang, sort=$sort, reason=$reason",
+                e
+            )
             throw RepositoryException(
-                "Could not reach Open Library. Check your connection and try again.",
+                "Could not load Open Library books: $reason",
                 e
             )
         }

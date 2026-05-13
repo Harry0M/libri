@@ -29,6 +29,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.theblankstate.libri.data.LibraryRepository
 import com.theblankstate.libri.data.UserPreferencesRepository
+import com.theblankstate.libri.datamodel.BookFormat
 import com.theblankstate.libri.datamodel.GutendexBook
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
@@ -44,7 +45,7 @@ import kotlinx.coroutines.launch
 fun GutenbergBookDetailScreen(
     bookId: Int,
     onBackClick: () -> Unit,
-    onReadClick: (GutendexBook, String?) -> Unit, // book and optional fileUri
+    onReadClick: (GutendexBook, String?, BookFormat?) -> Unit, // book, optional fileUri, optional stored format
     viewModel: GutenbergViewModel = viewModel(
         factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
             LocalContext.current.applicationContext as android.app.Application
@@ -83,8 +84,8 @@ fun GutenbergBookDetailScreen(
     val book = selectedBook
     val currentBookId = book?.id ?: bookId
     
-    // Get downloaded book info
-    val downloadedBook = remember(currentBookId) { viewModel.getDownloadedBook(currentBookId) }
+    // Get downloaded book info from the lightweight downloads cache.
+    val downloadedBook = viewModel.getDownloadedBook(currentBookId)
     
     // Load book details
     LaunchedEffect(bookId) {
@@ -309,7 +310,7 @@ fun GutenbergBookDetailScreen(
                                 Button(
                                     onClick = { 
                                         // Pass the downloaded book's fileUri if available
-                                        onReadClick(book, downloadedBook?.fileUri)
+                                        onReadClick(book, downloadedBook?.fileUri ?: downloadedBook?.filePath, downloadedBook?.format)
                                     },
                                     modifier = Modifier.weight(1f)
                                 ) {

@@ -39,6 +39,7 @@ import com.theblankstate.libri.view.ReaderScreen
 import com.theblankstate.libri.view.EpubReaderScreen
 import com.theblankstate.libri.view.GutenbergBrowseScreen
 import com.theblankstate.libri.view.GutenbergBookDetailScreen
+import com.theblankstate.libri.view.TextReaderScreen
 import com.theblankstate.libri.view.ShelvesScreen
 import com.theblankstate.libri.view.ShelfDetailScreen
 import com.theblankstate.libri.view.SplashScreen
@@ -64,6 +65,7 @@ import com.theblankstate.libri.ui.theme.MotionTokens
 import com.theblankstate.libri.viewModel.LibraryViewModel
 import com.theblankstate.libri.data.LibraryRepository
 import com.theblankstate.libri.datamodel.BookFormat
+import com.theblankstate.libri.datamodel.GutendexBook
 
 @Composable
 fun AppNavHost(
@@ -96,6 +98,47 @@ fun AppNavHost(
             launchSingleTop = true
             restoreState = true
         }
+    }
+    fun encodeNav(value: String?): String = URLEncoder.encode(value.orEmpty(), StandardCharsets.UTF_8.toString())
+    fun navigateReadableBook(
+        bookId: String,
+        title: String?,
+        author: String?,
+        coverUrl: String?,
+        format: BookFormat,
+        fileUri: String? = null,
+        downloadUrl: String? = null,
+        fallbackArchiveId: String? = null
+    ) {
+        val encodedTitle = encodeNav(title)
+        val encodedAuthor = encodeNav(author)
+        val encodedCover = encodeNav(coverUrl)
+        val encodedFileUri = encodeNav(fileUri)
+        val encodedDownloadUrl = encodeNav(downloadUrl)
+        val encodedFallbackArchiveId = encodeNav(fallbackArchiveId)
+        when (format) {
+            BookFormat.EPUB -> {
+                navController.navigate("epubReader/$bookId?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri&downloadUrl=$encodedDownloadUrl&fallbackArchiveId=$encodedFallbackArchiveId")
+            }
+            BookFormat.PDF -> {
+                navController.navigate("reader/$bookId?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri&downloadUrl=$encodedDownloadUrl&fallbackArchiveId=$encodedFallbackArchiveId")
+            }
+            BookFormat.TXT,
+            BookFormat.HTML -> {
+                navController.navigate("textReader/$bookId?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri&downloadUrl=$encodedDownloadUrl&format=${format.name}&fallbackArchiveId=$encodedFallbackArchiveId")
+            }
+        }
+    }
+    fun navigateGutendexBook(book: GutendexBook) {
+        val (downloadUrl, format) = book.getBestDownloadFormat() ?: return
+        navigateReadableBook(
+            bookId = "gutenberg_${book.id}",
+            title = book.title,
+            author = book.authorNames,
+            coverUrl = book.coverUrl,
+            format = format,
+            downloadUrl = downloadUrl
+        )
     }
 
     Box(
@@ -220,33 +263,32 @@ fun AppNavHost(
                         },
                         onShelvesClick = { navController.navigate("shelves") },
                         onDownloadedBookClick = { book ->
-                            val encodedTitle = URLEncoder.encode(book.title, StandardCharsets.UTF_8.toString())
-                            val encodedAuthor = URLEncoder.encode(book.author, StandardCharsets.UTF_8.toString())
-                            val encodedCover = URLEncoder.encode(book.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                            val encodedFileUri = URLEncoder.encode(book.fileUri.orEmpty(), StandardCharsets.UTF_8.toString())
-                            when (book.format) {
-                                BookFormat.EPUB -> {
-                                    navController.navigate("epubReader/${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                                }
-                                else -> {
-                                    navController.navigate("reader/${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                                }
-                            }
+                            navigateReadableBook(
+                                bookId = book.id,
+                                title = book.title,
+                                author = book.author,
+                                coverUrl = book.coverUrl,
+                                format = book.format,
+                                fileUri = book.fileUri ?: book.filePath
+                            )
                         },
                         onReadLocalBook = { book ->
                             val localPath = book.localFilePath ?: return@LibraryScreen
-                            val encodedTitle = URLEncoder.encode(book.title, StandardCharsets.UTF_8.toString())
-                            val encodedAuthor = URLEncoder.encode(book.author, StandardCharsets.UTF_8.toString())
-                            val encodedCover = URLEncoder.encode(book.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                            val encodedFileUri = URLEncoder.encode(localPath, StandardCharsets.UTF_8.toString())
                             val resolvedFormat = book.localFileFormat ?: when {
                                 localPath.lowercase().endsWith(".epub") -> BookFormat.EPUB
+                                localPath.lowercase().endsWith(".txt") -> BookFormat.TXT
+                                localPath.lowercase().endsWith(".html") || localPath.lowercase().endsWith(".htm") -> BookFormat.HTML
                                 else -> BookFormat.PDF
                             }
-                            when (resolvedFormat) {
-                                BookFormat.EPUB -> navController.navigate("epubReader/${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                                else -> navController.navigate("reader/${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                            }
+                            navigateReadableBook(
+                                bookId = book.id,
+                                title = book.title,
+                                author = book.author,
+                                coverUrl = book.coverUrl,
+                                format = resolvedFormat,
+                                fileUri = localPath,
+                                fallbackArchiveId = book.internetArchiveId
+                            )
                         },
                         onReadOnlineBook = { book ->
                             val iaId = book.internetArchiveId ?: return@LibraryScreen
@@ -303,20 +345,23 @@ fun AppNavHost(
                 onReadLocalFile = { filePath, format ->
                     // Navigate to appropriate reader based on stored format or fallback to file extension
                     val book = libraryViewModel.selectedBook.value
-                    val encodedTitle = URLEncoder.encode(book?.title ?: "Book", StandardCharsets.UTF_8.toString())
-                    val encodedAuthor = URLEncoder.encode(book?.author ?: "", StandardCharsets.UTF_8.toString())
-                    val encodedCover = URLEncoder.encode(book?.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                    val encodedFileUri = URLEncoder.encode(filePath, StandardCharsets.UTF_8.toString())
                     val bookId = book?.id ?: "local"
                     
                     val resolvedFormat = format ?: when {
                         filePath.lowercase().endsWith(".epub") -> BookFormat.EPUB
+                        filePath.lowercase().endsWith(".txt") -> BookFormat.TXT
+                        filePath.lowercase().endsWith(".html") || filePath.lowercase().endsWith(".htm") -> BookFormat.HTML
                         else -> BookFormat.PDF
                     }
-                    when (resolvedFormat) {
-                        BookFormat.EPUB -> navController.navigate("epubReader/$bookId?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                        else -> navController.navigate("reader/$bookId?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                    }
+                    navigateReadableBook(
+                        bookId = bookId,
+                        title = book?.title ?: "Book",
+                        author = book?.author ?: "",
+                        coverUrl = book?.coverUrl,
+                        format = resolvedFormat,
+                        fileUri = filePath,
+                        fallbackArchiveId = book?.internetArchiveId
+                    )
                 },
                 isUserLoggedIn = userPreferencesRepository.isOpenLibraryLoggedIn(),
                 onBorrowConfirm = { borrowKey ->
@@ -411,11 +456,7 @@ fun AppNavHost(
                     navController.navigate("gutenbergDetail/${book.id}")
                 },
                 onReadGutenbergClick = { book ->
-                    val encodedTitle = URLEncoder.encode(book.title, StandardCharsets.UTF_8.toString())
-                    val encodedAuthor = URLEncoder.encode(book.authorNames, StandardCharsets.UTF_8.toString())
-                    val encodedCover = URLEncoder.encode(book.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                    val downloadUrl = URLEncoder.encode("https://www.gutenberg.org/ebooks/${book.id}.epub.images", StandardCharsets.UTF_8.toString())
-                    navController.navigate("epubReader/gutenberg_${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&downloadUrl=$downloadUrl")
+                    navigateGutendexBook(book)
                 },
                 onAdvancedSearchClick = {
                     navController.navigate("advancedSearch")
@@ -429,13 +470,15 @@ fun AppNavHost(
             )
         }
         composable(
-            route = "reader/{bookId}?title={title}&author={author}&coverUrl={coverUrl}&fileUri={fileUri}",
+            route = "reader/{bookId}?title={title}&author={author}&coverUrl={coverUrl}&fileUri={fileUri}&downloadUrl={downloadUrl}&fallbackArchiveId={fallbackArchiveId}",
             arguments = listOf(
                 navArgument("bookId") { type = NavType.StringType },
                 navArgument("title") { type = NavType.StringType; nullable = true },
                 navArgument("author") { type = NavType.StringType; nullable = true },
                 navArgument("coverUrl") { type = NavType.StringType; nullable = true },
-                navArgument("fileUri") { type = NavType.StringType; nullable = true }
+                navArgument("fileUri") { type = NavType.StringType; nullable = true },
+                navArgument("downloadUrl") { type = NavType.StringType; nullable = true },
+                navArgument("fallbackArchiveId") { type = NavType.StringType; nullable = true }
             )
         ) {
             val bookId = it.arguments?.getString("bookId") ?: return@composable
@@ -445,14 +488,30 @@ fun AppNavHost(
             val fileUri = it.arguments?.getString("fileUri")
                 ?.let { f -> URLDecoder.decode(f, StandardCharsets.UTF_8.toString()) }
                 ?.takeIf { f -> f.isNotBlank() }
+            val downloadUrl = it.arguments?.getString("downloadUrl")
+                ?.let { d -> URLDecoder.decode(d, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { d -> d.isNotBlank() }
+            val fallbackArchiveId = it.arguments?.getString("fallbackArchiveId")
+                ?.let { id -> URLDecoder.decode(id, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { id -> id.isNotBlank() }
             
-            if (fileUri != null) {
+            if (fileUri != null || downloadUrl != null) {
+                val archiveFallback = fallbackArchiveId
+                    ?: bookId.takeIf { id -> fileUri == null && (downloadUrl == null || downloadUrl.contains("archive.org/download")) }
                 PdfReaderScreen(
                     bookId = bookId,
                     title = title,
                     author = author,
                     coverUrl = coverUrl,
                     fileUri = fileUri,
+                    downloadUrl = downloadUrl,
+                    fallbackArchiveId = archiveFallback,
+                    onFallbackToArchiveReader = { archiveId ->
+                        val encodedTitle = encodeNav(title)
+                        navController.navigate("reader/$archiveId?title=$encodedTitle") {
+                            launchSingleTop = true
+                        }
+                    },
                     onBackClick = { navController.popBackStack() }
                 )
             } else {
@@ -465,22 +524,30 @@ fun AppNavHost(
         }
         // EPUB Reader route
         composable(
-            route = "epubReader/{bookId}?title={title}&author={author}&coverUrl={coverUrl}&fileUri={fileUri}&downloadUrl={downloadUrl}",
+            route = "epubReader/{bookId}?title={title}&author={author}&coverUrl={coverUrl}&fileUri={fileUri}&downloadUrl={downloadUrl}&fallbackArchiveId={fallbackArchiveId}",
             arguments = listOf(
                 navArgument("bookId") { type = NavType.StringType },
                 navArgument("title") { type = NavType.StringType; nullable = true },
                 navArgument("author") { type = NavType.StringType; nullable = true },
                 navArgument("coverUrl") { type = NavType.StringType; nullable = true },
                 navArgument("fileUri") { type = NavType.StringType; nullable = true },
-                navArgument("downloadUrl") { type = NavType.StringType; nullable = true }
+                navArgument("downloadUrl") { type = NavType.StringType; nullable = true },
+                navArgument("fallbackArchiveId") { type = NavType.StringType; nullable = true }
             )
         ) {
             val bookId = it.arguments?.getString("bookId") ?: return@composable
             val title = it.arguments?.getString("title")?.let { t -> URLDecoder.decode(t, StandardCharsets.UTF_8.toString()) }
             val author = it.arguments?.getString("author")?.let { a -> URLDecoder.decode(a, StandardCharsets.UTF_8.toString()) }
             val coverUrl = it.arguments?.getString("coverUrl")?.let { c -> URLDecoder.decode(c, StandardCharsets.UTF_8.toString()) }
-            val fileUri = it.arguments?.getString("fileUri")?.let { f -> URLDecoder.decode(f, StandardCharsets.UTF_8.toString()) }
-            val downloadUrl = it.arguments?.getString("downloadUrl")?.let { d -> URLDecoder.decode(d, StandardCharsets.UTF_8.toString()) }
+            val fileUri = it.arguments?.getString("fileUri")
+                ?.let { f -> URLDecoder.decode(f, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { f -> f.isNotBlank() }
+            val downloadUrl = it.arguments?.getString("downloadUrl")
+                ?.let { d -> URLDecoder.decode(d, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { d -> d.isNotBlank() }
+            val fallbackArchiveId = it.arguments?.getString("fallbackArchiveId")
+                ?.let { id -> URLDecoder.decode(id, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { id -> id.isNotBlank() }
             
             EpubReaderScreen(
                 bookId = bookId,
@@ -489,6 +556,59 @@ fun AppNavHost(
                 coverUrl = coverUrl,
                 fileUri = fileUri,
                 downloadUrl = downloadUrl,
+                fallbackArchiveId = fallbackArchiveId,
+                onFallbackToArchiveReader = { archiveId ->
+                    val encodedTitle = encodeNav(title)
+                    navController.navigate("reader/$archiveId?title=$encodedTitle") {
+                        launchSingleTop = true
+                    }
+                },
+                onBackClick = { navController.popBackStack() }
+            )
+        }
+        composable(
+            route = "textReader/{bookId}?title={title}&author={author}&coverUrl={coverUrl}&fileUri={fileUri}&downloadUrl={downloadUrl}&format={format}&fallbackArchiveId={fallbackArchiveId}",
+            arguments = listOf(
+                navArgument("bookId") { type = NavType.StringType },
+                navArgument("title") { type = NavType.StringType; nullable = true },
+                navArgument("author") { type = NavType.StringType; nullable = true },
+                navArgument("coverUrl") { type = NavType.StringType; nullable = true },
+                navArgument("fileUri") { type = NavType.StringType; nullable = true },
+                navArgument("downloadUrl") { type = NavType.StringType; nullable = true },
+                navArgument("format") { type = NavType.StringType; nullable = true },
+                navArgument("fallbackArchiveId") { type = NavType.StringType; nullable = true }
+            )
+        ) {
+            val bookId = it.arguments?.getString("bookId") ?: return@composable
+            val title = it.arguments?.getString("title")?.let { t -> URLDecoder.decode(t, StandardCharsets.UTF_8.toString()) }
+            val author = it.arguments?.getString("author")?.let { a -> URLDecoder.decode(a, StandardCharsets.UTF_8.toString()) }
+            val fileUri = it.arguments?.getString("fileUri")
+                ?.let { f -> URLDecoder.decode(f, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { f -> f.isNotBlank() }
+            val downloadUrl = it.arguments?.getString("downloadUrl")
+                ?.let { d -> URLDecoder.decode(d, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { d -> d.isNotBlank() }
+            val format = it.arguments?.getString("format")
+                ?.let { raw -> runCatching { BookFormat.valueOf(raw) }.getOrNull() }
+                ?: BookFormat.TXT
+            val fallbackArchiveId = it.arguments?.getString("fallbackArchiveId")
+                ?.let { id -> URLDecoder.decode(id, StandardCharsets.UTF_8.toString()) }
+                ?.takeIf { id -> id.isNotBlank() }
+
+            TextReaderScreen(
+                bookId = bookId,
+                title = title,
+                author = author,
+                fileUri = fileUri,
+                downloadUrl = downloadUrl,
+                format = format,
+                fallbackArchiveId = fallbackArchiveId,
+                onFallbackToArchiveReader = { archiveId ->
+                    val encodedTitle = encodeNav(title)
+                    navController.navigate("reader/$archiveId?title=$encodedTitle") {
+                        launchSingleTop = true
+                    }
+                },
                 onBackClick = { navController.popBackStack() }
             )
         }
@@ -496,20 +616,14 @@ fun AppNavHost(
             DownloadsScreen(
                 onBackClick = { navController.popBackStack() },
                 onBookClick = { book ->
-                    val encodedTitle = URLEncoder.encode(book.title, StandardCharsets.UTF_8.toString())
-                    val encodedAuthor = URLEncoder.encode(book.author, StandardCharsets.UTF_8.toString())
-                    val encodedCover = URLEncoder.encode(book.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                    val encodedFileUri = URLEncoder.encode(book.fileUri ?: "", StandardCharsets.UTF_8.toString())
-                    
-                    // Route to appropriate reader based on format
-                    when (book.format) {
-                        BookFormat.EPUB -> {
-                            navController.navigate("epubReader/${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                        }
-                        else -> {
-                            navController.navigate("reader/${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                        }
-                    }
+                    navigateReadableBook(
+                        bookId = book.id,
+                        title = book.title,
+                        author = book.author,
+                        coverUrl = book.coverUrl,
+                        format = book.format,
+                        fileUri = book.fileUri ?: book.filePath
+                    )
                 }
             )
         }
@@ -559,13 +673,28 @@ fun AppNavHost(
                     val encodedCover = URLEncoder.encode(coverUrl ?: "", StandardCharsets.UTF_8.toString())
                     navController.navigate("reader/$id?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover")
                 },
-                onReadGutenbergBook = { gutenbergId, title, author, coverUrl ->
-                    // Navigate to EPUB reader for Gutenberg book
-                    val encodedTitle = URLEncoder.encode(title, StandardCharsets.UTF_8.toString())
-                    val encodedAuthor = URLEncoder.encode(author, StandardCharsets.UTF_8.toString())
-                    val encodedCover = URLEncoder.encode(coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                    val downloadUrl = URLEncoder.encode("https://www.gutenberg.org/ebooks/$gutenbergId.epub.images", StandardCharsets.UTF_8.toString())
-                    navController.navigate("epubReader/gutenberg_$gutenbergId?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&downloadUrl=$downloadUrl")
+                onReadGutenbergBook = { gutenbergId, title, author, coverUrl, fileUri, format ->
+                    navigateReadableBook(
+                        bookId = "gutenberg_$gutenbergId",
+                        title = title,
+                        author = author,
+                        coverUrl = coverUrl,
+                        format = format ?: BookFormat.EPUB,
+                        fileUri = fileUri
+                    )
+                },
+                onReadArchiveOption = { archiveId, title, author, coverUrl, option ->
+                    option.readerFormat?.let { format ->
+                        navigateReadableBook(
+                            bookId = archiveId,
+                            title = title,
+                            author = author,
+                            coverUrl = coverUrl,
+                            format = format,
+                            downloadUrl = option.url,
+                            fallbackArchiveId = archiveId
+                        )
+                    }
                 },
                 isUserLoggedIn = userPreferencesRepository.isOpenLibraryLoggedIn(),
                 onBorrowConfirm = { bookKey ->
@@ -614,13 +743,7 @@ fun AppNavHost(
                     navController.navigate("gutenbergDetail/${book.id}")
                 },
                 onReadBook = { book ->
-                    // Navigate to EPUB reader for Gutenberg book
-                    val encodedTitle = URLEncoder.encode(book.title, StandardCharsets.UTF_8.toString())
-                    val encodedAuthor = URLEncoder.encode(book.authorNames, StandardCharsets.UTF_8.toString())
-                    val encodedCover = URLEncoder.encode(book.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                    val downloadUrl = book.epubUrl ?: book.textUrl ?: ""
-                    val encodedDownloadUrl = URLEncoder.encode(downloadUrl, StandardCharsets.UTF_8.toString())
-                    navController.navigate("epubReader/gutenberg_${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&downloadUrl=$encodedDownloadUrl")
+                    navigateGutendexBook(book)
                 }
             )
         }
@@ -634,19 +757,26 @@ fun AppNavHost(
             GutenbergBookDetailScreen(
                 bookId = bookId,
                 onBackClick = { navController.popBackStack() },
-                onReadClick = { book, fileUri ->
-                    val encodedTitle = URLEncoder.encode(book.title, StandardCharsets.UTF_8.toString())
-                    val encodedAuthor = URLEncoder.encode(book.authorNames, StandardCharsets.UTF_8.toString())
-                    val encodedCover = URLEncoder.encode(book.coverUrl ?: "", StandardCharsets.UTF_8.toString())
-                    
-                    // If we have a local file, use it; otherwise provide download URL
+                onReadClick = { book, fileUri, storedFormat ->
+                    val bestFormat = book.getBestDownloadFormat()
                     if (fileUri != null) {
-                        val encodedFileUri = URLEncoder.encode(fileUri, StandardCharsets.UTF_8.toString())
-                        navController.navigate("epubReader/gutenberg_${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&fileUri=$encodedFileUri")
-                    } else {
-                        val downloadUrl = book.epubUrl ?: book.textUrl ?: ""
-                        val encodedDownloadUrl = URLEncoder.encode(downloadUrl, StandardCharsets.UTF_8.toString())
-                        navController.navigate("epubReader/gutenberg_${book.id}?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover&downloadUrl=$encodedDownloadUrl")
+                        navigateReadableBook(
+                            bookId = "gutenberg_${book.id}",
+                            title = book.title,
+                            author = book.authorNames,
+                            coverUrl = book.coverUrl,
+                            format = storedFormat ?: bestFormat?.second ?: BookFormat.EPUB,
+                            fileUri = fileUri
+                        )
+                    } else if (bestFormat != null) {
+                        navigateReadableBook(
+                            bookId = "gutenberg_${book.id}",
+                            title = book.title,
+                            author = book.authorNames,
+                            coverUrl = book.coverUrl,
+                            format = bestFormat.second,
+                            downloadUrl = bestFormat.first
+                        )
                     }
                 }
             )
