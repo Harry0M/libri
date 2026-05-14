@@ -161,13 +161,17 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     finalContent.add(trendingBooks)
                 }
 
-                _homeState.value = HomeState.Success(
-                    content = finalContent,
-                    gutenbergTitle = RecommendationSeeds.gutenbergHeadline(selectedGenres, selectedLanguages),
-                    gutenbergSubtitle = RecommendationSeeds.gutenbergSubtitle(selectedGenres, selectedLanguages)
-                )
+                if (finalContent.isEmpty() || finalContent.all { it.second.isEmpty() }) {
+                    _homeState.value = HomeState.Error("Could not connect to Open Library. Please check your internet connection and try again.")
+                } else {
+                    _homeState.value = HomeState.Success(
+                        content = finalContent,
+                        gutenbergTitle = RecommendationSeeds.gutenbergHeadline(selectedGenres, selectedLanguages),
+                        gutenbergSubtitle = RecommendationSeeds.gutenbergSubtitle(selectedGenres, selectedLanguages)
+                    )
+                }
             } catch (e: Exception) {
-                _homeState.value = HomeState.Error("Failed to load home content: ${e.message}")
+                _homeState.value = HomeState.Error("Failed to load home content. Check your connection and try again.")
             }
         }
     }

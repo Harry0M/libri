@@ -320,7 +320,11 @@ fun AppNavHost(
             arguments = listOf(navArgument("bookId") { type = NavType.StringType })
         ) {
             val bookId = it.arguments?.getString("bookId") ?: return@composable
-            val libraryViewModel: LibraryViewModel = viewModel()
+            val activity = LocalContext.current as androidx.activity.ComponentActivity
+            val libraryViewModel: LibraryViewModel = viewModel(
+                viewModelStoreOwner = activity,
+                factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(activity.application)
+            )
             
             LaunchedEffect(bookId) {
                 val uid = userPreferencesRepository.getGoogleUser().third
@@ -683,15 +687,16 @@ fun AppNavHost(
                         fileUri = fileUri
                     )
                 },
-                onReadArchiveOption = { archiveId, title, author, coverUrl, option ->
+                onReadArchiveOption = { archiveId, title, author, coverUrl, option, fileUri ->
                     option.readerFormat?.let { format ->
                         navigateReadableBook(
-                            bookId = archiveId,
+                            bookId = if (fileUri.isNullOrBlank()) archiveId else "${archiveId}_${option.extension}",
                             title = title,
                             author = author,
                             coverUrl = coverUrl,
                             format = format,
-                            downloadUrl = option.url,
+                            fileUri = fileUri,
+                            downloadUrl = if (fileUri.isNullOrBlank()) option.url else null,
                             fallbackArchiveId = archiveId
                         )
                     }
@@ -799,3 +804,4 @@ fun AppNavHost(
         }
     }
 }
+

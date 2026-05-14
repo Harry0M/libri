@@ -386,13 +386,35 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectBook(book: bookModel) {
+        // Clear stale state from previous book IMMEDIATELY so the UI never flashes old data
+        clearBookDetailState()
         _selectedBook.value = book
         fetchSimilarBooks(book)
         val workId = normalizeKey(book.key) ?: return
         fetchWorkDetails(workId)
     }
 
+    /**
+     * Instantly clears all book-detail state so that navigating to a new book
+     * never shows the previous book's data for a few frames.
+     */
+    private fun clearBookDetailState() {
+        _selectedBook.value = null
+        _workDetail.value = null
+        _editions.value = emptyList()
+        _ratings.value = null
+        _bookshelves.value = null
+        _similarBooks.value = emptyList()
+        _archiveDownloadOptions.value = emptyList()
+        _isLoadingArchiveDownloadOptions.value = false
+        _resolvedArchiveIdentifier.value = null
+        fallbackJob?.cancel()
+        lastLoadedCacheKey = null
+    }
+
     fun setSelectedBookById(bookId: String) {
+        // Clear stale state from previous book IMMEDIATELY
+        clearBookDetailState()
         viewModelScope.launch {
             if (bookId.startsWith("/books/")) {
                 val editionId = bookId.removePrefix("/books/")
@@ -472,11 +494,9 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
     private fun fetchWorkDetails(key: String?) {
         val workId = normalizeKey(key) ?: return
         viewModelScope.launch {
-            _workDetail.value = null
-            _editions.value = emptyList()
-            _ratings.value = null
-            _bookshelves.value = null
-            _archiveDownloadOptions.value = emptyList()
+            // Note: we do NOT clear state here because clearBookDetailState() already
+            // handled it at the start of selectBook/setSelectedBookById. Clearing here
+            // would race with loadArchiveDownloadOptionsWithFallback and cause glitches.
 
             launch { _workDetail.value = bookRepository.getWorkDetails(workId) }
             launch { 
@@ -547,15 +567,13 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
         title: String?,
         author: String?
     ) {
-        // Build a cache key from the book's identity
-        val cacheKey = "${primaryIdentifier}|${isbn?.firstOrNull()}|${title}"
+        // Build a cache key from the book's identity — include edition ocaids so
+        // we re-fetch when editions arrive asynchronously
+        val editionOcaids = editions.mapNotNull { it.ocaid }.sorted().joinToString(",")
+        val cacheKey = "${primaryIdentifier}|${isbn?.firstOrNull()}|${title}|${editionOcaids}"
 
-        // If we already have results for this exact book, skip the fetch
-        if (cacheKey == lastLoadedCacheKey && _archiveDownloadOptions.value.isNotEmpty()) {
-            return
-        }
-        // Also skip if we already searched this book and found nothing
-        if (cacheKey == lastLoadedCacheKey && !_isLoadingArchiveDownloadOptions.value) {
+        // If we already have results for this exact book + editions combo, skip
+        if (cacheKey == lastLoadedCacheKey && (_archiveDownloadOptions.value.isNotEmpty() || !_isLoadingArchiveDownloadOptions.value)) {
             return
         }
 
@@ -565,7 +583,9 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
         fallbackJob = viewModelScope.launch {
             _isLoadingArchiveDownloadOptions.value = true
             _resolvedArchiveIdentifier.value = null
-            _archiveDownloadOptions.value = emptyList()  // Clear stale data immediately
+            // Don't clear existing options here — clearBookDetailState already did it.
+            // Clearing again would cause a flash of empty state if editions arrive
+            // while we're already loading from the primary identifier.
 
             try {
                 withContext(Dispatchers.IO) {

@@ -1093,7 +1093,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                                 val progress = ((bytesRead * 100) / contentLength).toInt()
                                 if (progress != lastProgress) {
                                     lastProgress = progress
-                                    _downloadProgressMap.value = _downloadProgressMap.value + (bookId to progress.toFloat())
+                                    _downloadProgressMap.value = _downloadProgressMap.value + (bookId to (progress / 100f))
                                     withContext(Dispatchers.Main) {
                                         if (_downloadingBookIds.value.contains(bookId)) {
                                             showDownloadProgressNotification(bookId, bookTitle, progress)
@@ -1162,7 +1162,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                             val progress = ((bytesRead * 100) / contentLength).toInt()
                             if (progress != lastProgress) {
                                 lastProgress = progress
-                                _downloadProgressMap.value = _downloadProgressMap.value + (bookId to progress.toFloat())
+                                _downloadProgressMap.value = _downloadProgressMap.value + (bookId to (progress / 100f))
                                 withContext(Dispatchers.Main) {
                                     if (_downloadingBookIds.value.contains(bookId)) {
                                         showDownloadProgressNotification(bookId, bookTitle, progress)

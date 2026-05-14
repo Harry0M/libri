@@ -747,10 +747,22 @@ private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int): Bitmap {
 
             val width = (page.width * scale).toInt()
             val height = (page.height * scale).toInt()
-            val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565) // 2 bytes/pixel instead of 4
-            bmp.eraseColor(android.graphics.Color.WHITE)
-            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            return bmp
+
+            // Try RGB_565 first (2 bytes/pixel, lower memory). Some PDFs with
+            // transparency or unusual colour spaces don't support it, so fall
+            // back to ARGB_8888 (4 bytes/pixel) if the renderer throws.
+            return try {
+                val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+                bmp.eraseColor(android.graphics.Color.WHITE)
+                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bmp
+            } catch (_: IllegalArgumentException) {
+                // Unsupported pixel format for RGB_565 — retry with ARGB_8888
+                val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                bmp.eraseColor(android.graphics.Color.WHITE)
+                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bmp
+            }
         } finally {
             page.close()
         }
