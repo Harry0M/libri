@@ -137,6 +137,7 @@ fun GutenbergBookDetailScreen(
     val isDownloaded = viewModel.isBookDownloaded(currentBookId)
     
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             LibriTopAppBar(
                 title = "Book Details",

@@ -207,7 +207,8 @@ fun BookDetailScreen(
     }
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.surface
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { paddingValues ->
         // key() on the book's identity ensures all local Compose state (scroll position,
         // expanded states, etc.) resets when navigating to a different book.

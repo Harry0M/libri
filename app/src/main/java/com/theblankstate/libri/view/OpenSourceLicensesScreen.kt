@@ -95,6 +95,7 @@ fun OpenSourceLicensesScreen(
     )
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             LibriTopAppBar(
                 title = "Open Source Licenses",

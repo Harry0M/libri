@@ -166,6 +166,7 @@ fun LibraryScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 modifier = Modifier.padding(bottom = 84.dp),
@@ -188,6 +189,7 @@ fun LibraryScreen(
         Column(
             modifier = modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .padding(paddingValues)
                 .consumeWindowInsets(paddingValues)
         ) {

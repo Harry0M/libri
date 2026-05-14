@@ -65,6 +65,7 @@ fun OpenLibraryLoginScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             LibriTopAppBar(
                 title = "Connect Open Library",

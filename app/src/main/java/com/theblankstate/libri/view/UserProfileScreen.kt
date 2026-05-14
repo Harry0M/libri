@@ -44,6 +44,7 @@ fun UserProfileScreen(
     var showDisconnectOLDialog by remember { mutableStateOf(false) }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             LibriTopAppBar(
                 title = "Profile",

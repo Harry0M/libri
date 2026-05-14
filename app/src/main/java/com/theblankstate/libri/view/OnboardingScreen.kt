@@ -31,6 +31,7 @@ fun OnboardingScreen(
     val availableAuthors by viewModel.availableAuthors.collectAsState()
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             Row(
                 modifier = Modifier

@@ -26,6 +26,7 @@ fun ProfileSetupScreen(
     val isLoading by viewModel.isLoading.collectAsState()
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             LibriTopAppBar(
                 title = "Complete Your Profile",
