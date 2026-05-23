@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
+import com.theblankstate.libri.util.BookIdentity
+import com.theblankstate.libri.util.ReadingProgressUtils
 
 class LibraryRepository {
     private val database = FirebaseDatabase.getInstance()
@@ -48,7 +50,9 @@ class LibraryRepository {
     
     suspend fun addBookToLibrary(uid: String, book: LibraryBook): Result<Unit> {
         return try {
-            libraryRef.child(uid).child(book.id).setValue(book).await()
+            val reviewKey = book.publicReviewKey
+                ?: BookIdentity.forLibraryBook(book).key
+            libraryRef.child(uid).child(book.id).setValue(book.copy(publicReviewKey = reviewKey)).await()
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
@@ -95,10 +99,22 @@ class LibraryRepository {
     
     suspend fun updateReadingProgress(uid: String, bookId: String, currentPage: Int, totalPages: Int): Result<Unit> {
         return try {
-            val updates = mapOf(
-                "currentPage" to currentPage,
-                "totalPages" to totalPages
+            val book = getBook(uid, bookId)
+            val normalized = ReadingProgressUtils.normalize(currentPage, totalPages, book?.readingStatusEnum)
+            val updates = mutableMapOf<String, Any?>(
+                "currentPage" to normalized.currentPage,
+                "totalPages" to normalized.totalPages,
+                "lastProgressUpdatedAt" to System.currentTimeMillis()
             )
+            if (normalized.status == ReadingStatus.FINISHED) {
+                updates["status"] = normalized.status.name
+                updates["dateFinished"] = System.currentTimeMillis()
+            } else if (normalized.status == ReadingStatus.IN_PROGRESS) {
+                updates["status"] = normalized.status.name
+                if (book?.dateStarted == null) {
+                    updates["dateStarted"] = System.currentTimeMillis()
+                }
+            }
             libraryRef.child(uid).child(bookId).updateChildren(updates).await()
             Result.success(Unit)
         } catch (e: Exception) {

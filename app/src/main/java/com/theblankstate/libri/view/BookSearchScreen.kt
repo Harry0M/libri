@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.LocalLibrary
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -107,7 +108,9 @@ fun BookSearchScreen(
     onGutenbergClick: (GutendexBook) -> Unit = {},
     onReadGutenbergClick: (GutendexBook) -> Unit = {},
     onAdvancedSearchClick: () -> Unit = {},
-    onReadClick: (String, String?, String?, String?) -> Unit = { _, _, _, _ -> }
+    onScanClick: () -> Unit = {},
+    onReadClick: (String, String?, String?, String?) -> Unit = { _, _, _, _ -> },
+    initialIsbn: String? = null
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -134,11 +137,21 @@ fun BookSearchScreen(
     val gutDownloadingBookIds by gutenbergViewModel.downloadingBookIds.collectAsState()
     val gutDownloadProgress by gutenbergViewModel.downloadProgress.collectAsState()
 
-    var query by remember { mutableStateOf("") }
+    var query by remember { mutableStateOf(initialIsbn ?: "") }
     var active by remember { mutableStateOf(false) }
     var submittedQuery by remember { mutableStateOf("") }
     var autoSearchQuery by remember { mutableStateOf("") }
     var selectedSource by remember { mutableStateOf(SearchSource.ALL) }
+
+    // Auto-search when coming from barcode scanner with an ISBN
+    LaunchedEffect(initialIsbn) {
+        if (!initialIsbn.isNullOrEmpty()) {
+            query = initialIsbn
+            submittedQuery = initialIsbn
+            autoSearchQuery = initialIsbn
+            viewModel.fetchBooksByQuery("isbn:$initialIsbn")
+        }
+    }
     var quickActionTarget by remember { mutableStateOf<SearchQuickActionTarget?>(null) }
 
     fun saveToLibrary(book: LibraryBook) {
@@ -300,6 +313,18 @@ fun BookSearchScreen(
                     Icon(Icons.Default.FilterList, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Filters")
+                }
+
+                FilledTonalButton(
+                    onClick = {
+                        collapseSearch()
+                        onScanClick()
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp)
+                ) {
+                    Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Scan ISBN")
                 }
             }
 

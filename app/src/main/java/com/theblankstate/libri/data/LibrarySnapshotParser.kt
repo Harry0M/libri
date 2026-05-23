@@ -47,6 +47,8 @@ object LibrarySnapshotParser {
         val localFilePath = map["localFilePath"] as? String
         val localFileFormatRaw = map["localFileFormat"] as? String
         val localFileFormat = parseBookFormat(localFileFormatRaw)
+        val publicReviewKey = map["publicReviewKey"] as? String
+        val lastProgressUpdatedAt = (map["lastProgressUpdatedAt"] as? Number)?.toLong()
 
         return LibraryBook(
             id = id,
@@ -69,8 +71,9 @@ object LibrarySnapshotParser {
             totalPages = totalPages,
             publisher = publisher,
             localFilePath = localFilePath,
-            localFileFormat = localFileFormat
-            ,
+            localFileFormat = localFileFormat,
+            publicReviewKey = publicReviewKey,
+            lastProgressUpdatedAt = lastProgressUpdatedAt,
             gutenbergId = gutenbergId
         )
     }

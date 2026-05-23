@@ -6,7 +6,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.theblankstate.libri.data.RecommendationSeeds
 import com.theblankstate.libri.datamodel.bookModel
+import com.theblankstate.libri.datamodel.GutendexBook
 import com.theblankstate.libri.data.UserPreferencesRepository
+import com.theblankstate.libri.data_retrieval.retrofitinatance
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -23,11 +25,20 @@ sealed interface HomeState {
         val gutenbergTitle: String,
         val gutenbergSubtitle: String
     ) : HomeState
+    /**
+     * When Open Library is unavailable, show Gutenberg content as fallback
+     * so the home screen is never empty.
+     */
+    data class PartialSuccess(
+        val gutenbergSections: List<Pair<String, List<GutendexBook>>>,
+        val retryMessage: String
+    ) : HomeState
     data class Error(val message: String) : HomeState
 }
 
 class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val apiRepository = com.theblankstate.libri.data_retrieval.repository
+    private val gutendexApi = retrofitinatance.gutendexApi
     private val userPreferencesRepository = UserPreferencesRepository(application)
 
     private val _homeState = MutableStateFlow<HomeState>(HomeState.Loading)
@@ -162,7 +173,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (finalContent.isEmpty() || finalContent.all { it.second.isEmpty() }) {
-                    _homeState.value = HomeState.Error("Could not connect to Open Library. Please check your internet connection and try again.")
+                    // Open Library returned nothing — fallback to Gutenberg
+                    loadGutenbergFallback("Open Library is currently unavailable. Showing free classics instead.")
                 } else {
                     _homeState.value = HomeState.Success(
                         content = finalContent,
@@ -171,8 +183,85 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             } catch (e: Exception) {
-                _homeState.value = HomeState.Error("Failed to load home content. Check your connection and try again.")
+                // Network failure — try Gutenberg as fallback
+                loadGutenbergFallback("Could not connect to Open Library. Showing free classics from Project Gutenberg.")
             }
+        }
+    }
+
+    /**
+     * When Open Library fails, fill the home screen with Gutenberg content
+     * so the user always has something to browse.
+     */
+    private suspend fun loadGutenbergFallback(message: String) {
+        try {
+            val sections = mutableListOf<Pair<String, List<GutendexBook>>>()
+
+            val selectedGenres = userPreferencesRepository.getSelectedGenres().toList().shuffled()
+
+            supervisorScope {
+                // Popular books — always fetch
+                val popularDeferred = async(Dispatchers.IO) {
+                    runCatching {
+                        gutendexApi.getPopularBooks(languages = "en").results.take(15)
+                    }.getOrDefault(emptyList())
+                }
+
+                // Genre-based sections from user preferences
+                val genreDeferreds = selectedGenres.take(3).map { genre ->
+                    genre to async(Dispatchers.IO) {
+                        runCatching {
+                            gutendexApi.getBooksByTopic(
+                                topic = genre.lowercase(),
+                                languages = "en"
+                            ).results.take(12)
+                        }.getOrDefault(emptyList())
+                    }
+                }
+
+                // Classic literature fallback
+                val classicsDeferred = async(Dispatchers.IO) {
+                    runCatching {
+                        gutendexApi.getBooksByTopic(
+                            topic = "fiction",
+                            languages = "en"
+                        ).results.take(12)
+                    }.getOrDefault(emptyList())
+                }
+
+                val popular = popularDeferred.await()
+                if (popular.isNotEmpty()) {
+                    sections.add("Popular Free Books" to popular)
+                }
+
+                for ((genre, deferred) in genreDeferreds) {
+                    val books = deferred.await()
+                    if (books.size >= 3) {
+                        sections.add("Free $genre Books" to books)
+                    }
+                }
+
+                val classics = classicsDeferred.await()
+                if (classics.isNotEmpty() && sections.size < 3) {
+                    sections.add("Classic Fiction" to classics)
+                }
+            }
+
+            if (sections.isEmpty()) {
+                // Even Gutenberg failed — show full error
+                _homeState.value = HomeState.Error(
+                    "No internet connection. Please check your network and try again."
+                )
+            } else {
+                _homeState.value = HomeState.PartialSuccess(
+                    gutenbergSections = sections,
+                    retryMessage = message
+                )
+            }
+        } catch (e: Exception) {
+            _homeState.value = HomeState.Error(
+                "No internet connection. Please check your network and try again."
+            )
         }
     }
 

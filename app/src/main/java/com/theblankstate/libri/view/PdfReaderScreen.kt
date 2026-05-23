@@ -41,6 +41,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import com.theblankstate.libri.view.components.LibriTopAppBar
+import java.util.concurrent.atomic.AtomicBoolean
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,6 +66,7 @@ fun PdfReaderScreen(
     var offset by remember { mutableStateOf(Offset.Zero) }
     val listState = rememberLazyListState()
     val pageCache = remember(bookId) { PdfPageBitmapCache() }
+    val rendererActive = remember(bookId, fileUri, downloadUrl) { AtomicBoolean(true) }
     val currentPage by remember {
         derivedStateOf { listState.firstVisibleItemIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0)) }
     }
@@ -126,6 +128,7 @@ fun PdfReaderScreen(
 
     // Download and initialize PDF
     LaunchedEffect(bookId, fileUri, downloadUrl) {
+        rendererActive.set(true)
         withContext(Dispatchers.IO) {
             try {
                 if (fileUri != null) {
@@ -183,8 +186,9 @@ fun PdfReaderScreen(
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(bookId, fileUri, downloadUrl) {
         onDispose {
+            rendererActive.set(false)
             try {
                 pdfRenderer?.let { renderer ->
                     synchronized(renderer) {
@@ -206,7 +210,10 @@ fun PdfReaderScreen(
             ((currentPage - 1)..(currentPage + 2))
                 .filter { it in 0 until pageCount && pageCache.get(it) == null }
                 .forEach { page ->
-                    pageCache.put(page, renderPdfPage(renderer, page))
+                    val rendered = renderPdfPage(renderer, page, rendererActive)
+                    if (rendered != null) {
+                        pageCache.put(page, rendered)
+                    }
                 }
         }
     }
@@ -417,6 +424,7 @@ fun PdfReaderScreen(
                         items(pageCount) { pageIndex ->
                             PdfPage(
                                 renderer = renderer,
+                                rendererActive = rendererActive,
                                 pageIndex = pageIndex,
                                 isNightMode = isNightMode,
                                 isBookmarked = bookmarks.contains(pageIndex),
@@ -625,6 +633,7 @@ fun PdfReaderScreen(
 @Composable
 fun PdfPage(
     renderer: PdfRenderer,
+    rendererActive: AtomicBoolean,
     pageIndex: Int,
     isNightMode: Boolean,
     isBookmarked: Boolean,
@@ -640,9 +649,11 @@ fun PdfPage(
                 if (cached != null) {
                     bitmap = cached
                 } else {
-                    val rendered = renderPdfPage(renderer, pageIndex)
-                    cache.put(pageIndex, rendered)
-                    bitmap = rendered
+                    val rendered = renderPdfPage(renderer, pageIndex, rendererActive)
+                    if (rendered != null) {
+                        cache.put(pageIndex, rendered)
+                        bitmap = rendered
+                    }
                 }
             }
         }
@@ -733,9 +744,18 @@ class PdfPageBitmapCache(
     }
 }
 
-private fun renderPdfPage(renderer: PdfRenderer, pageIndex: Int): Bitmap {
+private fun renderPdfPage(
+    renderer: PdfRenderer,
+    pageIndex: Int,
+    rendererActive: AtomicBoolean
+): Bitmap? {
     synchronized(renderer) {
-        val page = renderer.openPage(pageIndex)
+        if (!rendererActive.get()) return null
+        val page = try {
+            renderer.openPage(pageIndex)
+        } catch (_: IllegalStateException) {
+            return null
+        }
         try {
             // Cap rendered size to avoid OOM — 2048px max on longest edge is plenty for phones
             val maxDim = 2048

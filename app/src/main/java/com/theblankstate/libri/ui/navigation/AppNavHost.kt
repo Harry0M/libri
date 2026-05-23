@@ -10,8 +10,11 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +32,7 @@ import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.view.AdvancedSearchScreen
 import com.theblankstate.libri.view.BookDetailScreen
 import com.theblankstate.libri.view.BookSearchScreen
+import com.theblankstate.libri.view.BarcodeScannerScreen
 import com.theblankstate.libri.view.BorrowWebViewScreen
 import com.theblankstate.libri.view.DownloadsScreen
 import com.theblankstate.libri.view.EditionsListScreen
@@ -57,12 +61,15 @@ import com.theblankstate.libri.view.OpenSourceLicensesScreen
 import com.theblankstate.libri.viewModel.AuthViewModel
 import com.theblankstate.libri.viewModel.OpenLibraryViewModel
 import com.theblankstate.libri.view.LibraryScreen
+import com.theblankstate.libri.view.ImportBookDialog
 import com.theblankstate.libri.view.LibraryBookDetailScreen
 import com.theblankstate.libri.view.components.BottomNavigationBar
+import com.theblankstate.libri.view.components.CreateShelfDialog
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.foundation.layout.fillMaxSize
 import com.theblankstate.libri.ui.theme.MotionTokens
 import com.theblankstate.libri.viewModel.LibraryViewModel
+import com.theblankstate.libri.viewModel.ShelvesViewModel
 import com.theblankstate.libri.data.LibraryRepository
 import com.theblankstate.libri.datamodel.BookFormat
 import com.theblankstate.libri.datamodel.GutendexBook
@@ -84,7 +91,9 @@ fun AppNavHost(
     val navController = rememberNavController()
     val navBackStackEntry = navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry.value?.destination?.route
-    val currentTopLevelRoute = currentRoute?.substringBefore("/")
+    val currentTopLevelRoute = currentRoute
+        ?.substringBefore("?")
+        ?.substringBefore("/")
     val topLevelRoutes = remember { setOf("home", "library", "search", "profile") }
     val showBottomBar = currentTopLevelRoute in topLevelRoutes
     val density = LocalDensity.current
@@ -92,11 +101,9 @@ fun AppNavHost(
     fun navigateTopLevel(route: String) {
         navController.navigate(route) {
             popUpTo("home") {
-                saveState = true
                 inclusive = false
             }
             launchSingleTop = true
-            restoreState = true
         }
     }
     fun encodeNav(value: String?): String = URLEncoder.encode(value.orEmpty(), StandardCharsets.UTF_8.toString())
@@ -236,8 +243,122 @@ fun AppNavHost(
                 },
                 onFreeGutenbergBooksClick = {
                     navController.navigate("gutenbergBrowse")
+                },
+                onScanClick = {
+                    navController.navigate("scanner")
+                },
+                onSearchClick = {
+                    navigateTopLevel("search")
+                },
+                onGutenbergBookClick = { gutendexBook ->
+                    navController.navigate("gutenbergDetail/${gutendexBook.id}")
                 }
             )
+        }
+        composable(
+            route = "scanner?destination={destination}",
+            arguments = listOf(
+                navArgument("destination") {
+                    type = NavType.StringType
+                    defaultValue = "addBook"
+                }
+            )
+        ) { backStackEntry ->
+            val destination = backStackEntry.arguments?.getString("destination") ?: "addBook"
+            BarcodeScannerScreen(
+                onBackClick = { navController.popBackStack() },
+                onIsbnDetected = { isbn ->
+                    val encodedIsbn = encodeNav(isbn)
+                    navController.popBackStack()
+                    when (destination) {
+                        "search" -> navController.navigate("search?isbn=$encodedIsbn") {
+                            launchSingleTop = true
+                        }
+                        else -> navController.navigate("addBook?isbn=$encodedIsbn")
+                    }
+                }
+            )
+        }
+        composable(
+            route = "addBook?isbn={isbn}",
+            arguments = listOf(
+                navArgument("isbn") { type = NavType.StringType; nullable = true; defaultValue = null }
+            )
+        ) { backStackEntry ->
+            val isbn = backStackEntry.arguments?.getString("isbn").orEmpty()
+            val activity = LocalContext.current as androidx.activity.ComponentActivity
+            val libraryViewModel: LibraryViewModel = viewModel(
+                viewModelStoreOwner = activity,
+                factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(activity.application)
+            )
+            val shelvesViewModel: ShelvesViewModel = viewModel()
+            val allShelves = shelvesViewModel.allShelves.collectAsState()
+            val uid = userPreferencesRepository.getGoogleUser().third
+            var showCreateShelfDialog by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+            LaunchedEffect(uid) {
+                uid?.let { shelvesViewModel.loadShelves(it) }
+            }
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                ImportBookDialog(
+                    onDismiss = { navController.popBackStack() },
+                    onConfirm = { metadata ->
+                        uid?.let { userId ->
+                            libraryViewModel.addBookToLibrary(
+                                userId,
+                                metadata.copy(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    dateAdded = System.currentTimeMillis()
+                                )
+                            )
+                        }
+                        navController.popBackStack()
+                    },
+                    viewModel = libraryViewModel,
+                    hasFile = false,
+                    initialSearchQuery = isbn,
+                    autoFetchInitialQuery = isbn.isNotBlank(),
+                    shelves = allShelves.value,
+                    onCreateNewShelf = { showCreateShelfDialog = true },
+                    onScanIsbn = {
+                        navController.navigate("scanner") {
+                            popUpTo("addBook?isbn={isbn}") {
+                                inclusive = true
+                            }
+                        }
+                    },
+                    onConfirmWithShelves = { metadata, shelfIds ->
+                        uid?.let { userId ->
+                            libraryViewModel.addBookToLibraryWithShelves(
+                                userId,
+                                metadata.copy(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    dateAdded = System.currentTimeMillis()
+                                ),
+                                shelfIds
+                            )
+                        }
+                        navController.popBackStack()
+                    }
+                )
+            }
+
+            if (showCreateShelfDialog) {
+                CreateShelfDialog(
+                    onDismiss = { showCreateShelfDialog = false },
+                    onConfirm = { name, description ->
+                        uid?.let { userId ->
+                            shelvesViewModel.createShelf(
+                                uid = userId,
+                                name = name,
+                                description = description,
+                                onSuccess = { showCreateShelfDialog = false }
+                            )
+                        }
+                    }
+                )
+            }
         }
         composable("library") {
             val libraryViewModel: LibraryViewModel = viewModel(
@@ -256,10 +377,13 @@ fun AppNavHost(
                             navController.navigate("libraryBookDetail/$bookId")
                         },
                         onAddBookClick = {
-                            navController.navigate("search")
+                            navigateTopLevel("search")
                         },
                         onAddGutenbergClick = {
                             navController.navigate("gutenbergBrowse")
+                        },
+                        onScanClick = {
+                            navController.navigate("scanner")
                         },
                         onShelvesClick = { navController.navigate("shelves") },
                         onDownloadedBookClick = { book ->
@@ -448,7 +572,13 @@ fun AppNavHost(
                 onBackClick = { navController.popBackStack() }
             )
         }
-        composable("search") {
+        composable(
+            route = "search?isbn={isbn}",
+            arguments = listOf(
+                navArgument("isbn") { type = NavType.StringType; nullable = true; defaultValue = null }
+            )
+        ) { backStackEntry ->
+            val isbn = backStackEntry.arguments?.getString("isbn")
             BookSearchScreen(
                 viewModel = viewModel,
                 onBookClick = { bookId ->
@@ -465,12 +595,16 @@ fun AppNavHost(
                 onAdvancedSearchClick = {
                     navController.navigate("advancedSearch")
                 },
+                onScanClick = {
+                    navController.navigate("scanner?destination=search")
+                },
                 onReadClick = { bookId, title, author, coverUrl ->
                     val encodedTitle = URLEncoder.encode(title ?: "", StandardCharsets.UTF_8.toString())
                     val encodedAuthor = URLEncoder.encode(author ?: "", StandardCharsets.UTF_8.toString())
                     val encodedCover = URLEncoder.encode(coverUrl ?: "", StandardCharsets.UTF_8.toString())
                     navController.navigate("reader/$bookId?title=$encodedTitle&author=$encodedAuthor&coverUrl=$encodedCover")
-                }
+                },
+                initialIsbn = isbn
             )
         }
         composable(

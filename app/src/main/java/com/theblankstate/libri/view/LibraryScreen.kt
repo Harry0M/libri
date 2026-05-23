@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package com.theblankstate.libri.view
 
@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -43,8 +44,12 @@ import com.theblankstate.libri.data.OpenLibraryLoan
 import com.theblankstate.libri.data.OpenLibraryListItem
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
+import com.theblankstate.libri.datamodel.Shelf
+import com.theblankstate.libri.view.components.AddBookEntrySheet
+import com.theblankstate.libri.view.components.CreateShelfDialog
 import com.theblankstate.libri.viewModel.LibraryViewModel
 import com.theblankstate.libri.viewModel.OpenLibraryViewModel
+import com.theblankstate.libri.viewModel.ShelvesViewModel
 import com.theblankstate.libri.viewModel.SortOption
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,6 +58,7 @@ fun LibraryScreen(
     onBookClick: (String) -> Unit,
     onAddBookClick: () -> Unit,
     onAddGutenbergClick: () -> Unit = {},
+    onScanClick: () -> Unit = {},
     onDownloadedBookClick: (com.theblankstate.libri.datamodel.DownloadedBook) -> Unit,
     onReadLocalBook: (LibraryBook) -> Unit = {},
     onReadOnlineBook: (LibraryBook) -> Unit = {},
@@ -92,6 +98,9 @@ fun LibraryScreen(
     var importUri by remember { mutableStateOf<android.net.Uri?>(null) }
 
     var showAddOptions by remember { mutableStateOf(false) }
+    var showCreateShelfDialog by remember { mutableStateOf(false) }
+    val shelvesViewModel: ShelvesViewModel = viewModel()
+    val allShelves by shelvesViewModel.allShelves.collectAsStateWithLifecycle()
     
     // Download state - tracks which specific books are downloading (supports multiple)
     val downloadingBookIds by viewModel.downloadingBookIds.collectAsStateWithLifecycle()
@@ -159,6 +168,7 @@ fun LibraryScreen(
 
     LaunchedEffect(Unit) {
         uid?.let { viewModel.loadLibrary(it) }
+        uid?.let { shelvesViewModel.loadShelves(it) }
         // Load Open Library lists if logged in
         if (isOLLoggedIn) {
             openLibraryViewModel.loadUserLists()
@@ -371,7 +381,6 @@ fun LibraryScreen(
                     }
                 }
 
-                // Shelves chip - moved inside the LazyRow below
             }
 
             // Content
@@ -879,179 +888,77 @@ fun LibraryScreen(
                     showImportDialog = false
                 },
                 viewModel = viewModel,
-                hasFile = importUri != null
+                hasFile = importUri != null,
+                shelves = allShelves,
+                onCreateNewShelf = { showCreateShelfDialog = true },
+                onScanIsbn = {
+                    showImportDialog = false
+                    onScanClick()
+                },
+                onConfirmWithShelves = { metadata, shelfIds ->
+                    uid?.let { userId ->
+                        if (importUri != null) {
+                            viewModel.importLibraryBook(userId, importUri!!, metadata, shelfIds)
+                        } else {
+                            val newBook = metadata.copy(
+                                id = java.util.UUID.randomUUID().toString(),
+                                dateAdded = System.currentTimeMillis()
+                            )
+                            viewModel.addBookToLibraryWithShelves(userId, newBook, shelfIds)
+                        }
+                    }
+                    showImportDialog = false
+                }
+            )
+        }
+
+        if (showCreateShelfDialog) {
+            CreateShelfDialog(
+                onDismiss = { showCreateShelfDialog = false },
+                onConfirm = { name, description ->
+                    uid?.let { userId ->
+                        shelvesViewModel.createShelf(
+                            uid = userId,
+                            name = name,
+                            description = description,
+                            onSuccess = { showCreateShelfDialog = false }
+                        )
+                    }
+                }
             )
         }
 
         // Add Options Bottom Sheet
         if (showAddOptions) {
-            ModalBottomSheet(
-                onDismissRequest = { showAddOptions = false },
-                containerColor = MaterialTheme.colorScheme.surface,
-                dragHandle = { BottomSheetDefaults.DragHandle() }
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .padding(bottom = 32.dp)
-                ) {
-                    Text(
-                        "Add New Book",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-                    
-                    Surface(
-                        onClick = {
-                            showAddOptions = false
-                            // Allow selection of both PDF and EPUB files; filter later
-                            launcher.launch("*/*")
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.UploadFile,
-                                null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column {
-                                Text(
-                                    "Import PDF / EPUB",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    "Import a book from your device storage (PDF or EPUB)",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(12.dp))
-                    
-                    Surface(
-                        onClick = {
-                            showAddOptions = false
-                            onAddBookClick()
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Search,
-                                null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column {
-                                Text(
-                                    "From Open Library",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    "Search and add books from Open Library",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Surface(
-                        onClick = {
-                            showAddOptions = false
-                            importUri = null
-                            showImportDialog = true
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.Book,
-                                null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column {
-                                Text(
-                                    "From Paperback",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    "Add a paper copy without a digital file",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Surface(
-                        onClick = {
-                            showAddOptions = false
-                            onAddGutenbergClick()
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Icon(
-                                Icons.Default.AutoStories,
-                                null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column {
-                                Text(
-                                    "From Gutenberg",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    "Browse and add Project Gutenberg books",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
+            AddBookEntrySheet(
+                onDismiss = { showAddOptions = false },
+                onScanIsbn = {
+                    showAddOptions = false
+                    onScanClick()
+                },
+                onManualIsbn = {
+                    showAddOptions = false
+                    importUri = null
+                    showImportDialog = true
+                },
+                onImportFile = {
+                    showAddOptions = false
+                    launcher.launch("*/*")
+                },
+                onSearchOnline = {
+                    showAddOptions = false
+                    onAddBookClick()
+                },
+                onAddPaperback = {
+                    showAddOptions = false
+                    importUri = null
+                    showImportDialog = true
+                },
+                onBrowseGutenberg = {
+                    showAddOptions = false
+                    onAddGutenbergClick()
                 }
-            }
+            )
         }
         
         // Delete confirmation dialog
@@ -1919,194 +1826,710 @@ fun StatusGroupCard(
     }
 }
 
+@Composable
+private fun sheetTextFieldColors() = TextFieldDefaults.colors(
+    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    disabledContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    focusedIndicatorColor = Color.Transparent,
+    unfocusedIndicatorColor = Color.Transparent,
+    disabledIndicatorColor = Color.Transparent,
+    errorIndicatorColor = Color.Transparent
+)
+
+@Composable
+private fun sheetFilterChipColors() = FilterChipDefaults.filterChipColors(
+    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+    labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    selectedLeadingIconColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    selectedTrailingIconColor = MaterialTheme.colorScheme.onSecondaryContainer
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportBookDialog(
     onDismiss: () -> Unit,
     onConfirm: (LibraryBook) -> Unit,
-    viewModel: LibraryViewModel
-    , hasFile: Boolean = true
+    viewModel: LibraryViewModel,
+    hasFile: Boolean = true,
+    initialSearchQuery: String = "",
+    autoFetchInitialQuery: Boolean = false,
+    shelves: List<Shelf> = emptyList(),
+    onCreateNewShelf: () -> Unit = {},
+    onScanIsbn: (() -> Unit)? = null,
+    onConfirmWithShelves: ((LibraryBook, List<String>) -> Unit)? = null
 ) {
-    var searchQuery by remember { mutableStateOf("") }
+    var searchQuery by remember(initialSearchQuery) { mutableStateOf(initialSearchQuery) }
     var title by remember { mutableStateOf("") }
     var author by remember { mutableStateOf("") }
     var publisher by remember { mutableStateOf("") }
     var isbn by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var selectedStatus by remember { mutableStateOf(ReadingStatus.WANT_TO_READ) }
+    var selectedShelfIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isStatusExpanded by remember { mutableStateOf(false) }
+    var showAllShelvesSheet by remember { mutableStateOf(false) }
     var isLoading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     
     // Temporary storage for fetched book to preserve other fields like coverUrl
     var fetchedBook by remember { mutableStateOf<LibraryBook?>(null) }
 
-    AlertDialog(
+    fun lookup(query: String) {
+        if (query.isBlank()) return
+        isLoading = true
+        searchError = null
+        viewModel.fetchBookMetadata(query) { book ->
+            isLoading = false
+            if (book != null) {
+                fetchedBook = book
+                title = book.title
+                author = book.author
+                publisher = book.publisher ?: ""
+                isbn = book.isbn ?: query
+                description = book.description ?: ""
+            } else {
+                isbn = query
+                searchError = "No book found. You can still save it manually."
+            }
+        }
+    }
+
+    LaunchedEffect(initialSearchQuery, autoFetchInitialQuery) {
+        if (autoFetchInitialQuery && initialSearchQuery.isNotBlank() && fetchedBook == null) {
+            lookup(initialSearchQuery)
+        }
+    }
+
+    fun confirmBook() {
+        val finalBook = (fetchedBook ?: LibraryBook()).copy(
+            title = title,
+            author = author,
+            publisher = publisher,
+            isbn = isbn,
+            description = description,
+            status = selectedStatus.name
+        )
+        onConfirmWithShelves?.invoke(finalBook, selectedShelfIds.toList()) ?: onConfirm(finalBook)
+    }
+
+    val frequentShelves = remember(shelves, selectedShelfIds) {
+        val mostUsed = shelves
+            .sortedWith(
+                compareByDescending<Shelf> { it.bookCount }
+                    .thenByDescending { it.dateCreated }
+                    .thenBy { it.name.lowercase() }
+            )
+            .take(6)
+        val mostUsedIds = mostUsed.map { it.id }.toSet()
+        val selectedExtras = shelves.filter { it.id in selectedShelfIds && it.id !in mostUsedIds }
+        (selectedExtras + mostUsed).distinctBy { it.id }.take(8)
+    }
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Import Book Details") },
-        text = {
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 12.dp, bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (hasFile) "Import book" else "Add book",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Review the details before saving.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 540.dp)
+                    .padding(horizontal = 20.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text(
-                    "Auto-fill details",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp
                 ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        label = { Text("ISBN or Open Library ID") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                    
-                    FilledTonalButton(
-                        onClick = {
-                            if (searchQuery.isNotBlank()) {
-                                isLoading = true
-                                searchError = null
-                                viewModel.fetchBookMetadata(searchQuery) { book ->
-                                    isLoading = false
-                                    if (book != null) {
-                                        fetchedBook = book
-                                        title = book.title
-                                        author = book.author
-                                        publisher = book.publisher ?: ""
-                                        isbn = book.isbn ?: ""
-                                        description = book.description ?: ""
-                                    } else {
-                                        searchError = "No book found"
-                                    }
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Auto-fill",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            TextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                label = { Text("ISBN or Open Library ID") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true,
+                                shape = MaterialTheme.shapes.extraLarge,
+                                colors = sheetTextFieldColors()
+                            )
+
+                            if (onScanIsbn != null) {
+                                FilledTonalIconButton(
+                                    onClick = onScanIsbn,
+                                    modifier = Modifier.size(56.dp)
+                                ) {
+                                    Icon(Icons.Default.QrCodeScanner, contentDescription = "Scan ISBN")
                                 }
                             }
-                        },
-                        enabled = !isLoading && searchQuery.isNotBlank()
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                        } else {
-                            Icon(Icons.Default.Search, null)
+
+                            FilledTonalIconButton(
+                                onClick = { lookup(searchQuery) },
+                                enabled = !isLoading && searchQuery.isNotBlank(),
+                                modifier = Modifier.size(56.dp)
+                            ) {
+                                if (isLoading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(Icons.Default.Search, contentDescription = "Lookup")
+                                }
+                            }
+                        }
+
+                        if (searchError != null) {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = MaterialTheme.shapes.large,
+                                color = MaterialTheme.colorScheme.errorContainer,
+                                tonalElevation = 0.dp
+                            ) {
+                                Text(
+                                    text = searchError!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(12.dp)
+                                )
+                            }
                         }
                     }
                 }
-                
-                if (searchError != null) {
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Book details",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        TextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text("Title") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = sheetTextFieldColors()
+                        )
+
+                        TextField(
+                            value = author,
+                            onValueChange = { author = it },
+                            label = { Text("Author") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = sheetTextFieldColors()
+                        )
+
+                        ExposedDropdownMenuBox(
+                            expanded = isStatusExpanded,
+                            onExpandedChange = { isStatusExpanded = it },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            TextField(
+                                value = selectedStatus.displayName,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Reading Status") },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = isStatusExpanded)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(),
+                                shape = MaterialTheme.shapes.extraLarge,
+                                colors = sheetTextFieldColors()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = isStatusExpanded,
+                                onDismissRequest = { isStatusExpanded = false }
+                            ) {
+                                ReadingStatus.values().forEach { status ->
+                                    DropdownMenuItem(
+                                        text = { Text(status.displayName) },
+                                        onClick = {
+                                            selectedStatus = status
+                                            isStatusExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+
+                        TextField(
+                            value = publisher,
+                            onValueChange = { publisher = it },
+                            label = { Text("Publisher") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = sheetTextFieldColors()
+                        )
+
+                        TextField(
+                            value = isbn,
+                            onValueChange = { isbn = it },
+                            label = { Text("ISBN") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = sheetTextFieldColors()
+                        )
+
+                        TextField(
+                            value = description,
+                            onValueChange = { description = it },
+                            label = { Text("Description") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3,
+                            maxLines = 5,
+                            shape = MaterialTheme.shapes.extraLarge,
+                            colors = sheetTextFieldColors()
+                        )
+                    }
+                }
+
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    tonalElevation = 0.dp
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Shelves",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+
+                        if (shelves.isEmpty()) {
+                            Text(
+                                text = "No shelves yet.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "Most used",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                frequentShelves.forEach { shelf ->
+                                    val selected = shelf.id in selectedShelfIds
+                                    FilterChip(
+                                        selected = selected,
+                                        onClick = {
+                                            selectedShelfIds = if (selected) {
+                                                selectedShelfIds - shelf.id
+                                            } else {
+                                                selectedShelfIds + shelf.id
+                                            }
+                                        },
+                                        label = { Text(shelf.name) },
+                                        colors = sheetFilterChipColors(),
+                                        border = null,
+                                        leadingIcon = if (selected) {
+                                            {
+                                                Icon(
+                                                    Icons.Default.Check,
+                                                    null,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        } else {
+                                            null
+                                        }
+                                    )
+                                }
+                            }
+
+                            FilledTonalButton(
+                                onClick = { showAllShelvesSheet = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(52.dp),
+                                shape = MaterialTheme.shapes.extraLarge
+                            ) {
+                                Icon(Icons.Default.Inventory2, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    if (selectedShelfIds.isEmpty()) {
+                                        "Show all shelves"
+                                    } else {
+                                        "Show all shelves (${selectedShelfIds.size} selected)"
+                                    }
+                                )
+                            }
+                        }
+
+                        FilledTonalButton(
+                            onClick = onCreateNewShelf,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp),
+                            shape = MaterialTheme.shapes.extraLarge
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Create Shelf")
+                        }
+                    }
+                }
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color.Transparent,
+                tonalElevation = 0.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Text("Cancel")
+                    }
+                    FilledTonalButton(
+                        onClick = ::confirmBook,
+                        enabled = title.isNotBlank(),
+                        modifier = Modifier
+                            .weight(1.35f)
+                            .height(52.dp),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Text(if (hasFile) "Save & Import" else "Save")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showAllShelvesSheet) {
+        ShelfPickerSheet(
+            shelves = shelves,
+            selectedShelfIds = selectedShelfIds,
+            onSelectedShelfIdsChange = { selectedShelfIds = it },
+            onCreateNewShelf = {
+                showAllShelvesSheet = false
+                onCreateNewShelf()
+            },
+            onDismiss = { showAllShelvesSheet = false }
+        )
+    }
+}
+
+@Composable
+private fun ShelfPickerSheet(
+    shelves: List<Shelf>,
+    selectedShelfIds: Set<String>,
+    onSelectedShelfIdsChange: (Set<String>) -> Unit,
+    onCreateNewShelf: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val filteredShelves = remember(shelves, query) {
+        val cleaned = query.trim()
+        val ordered = shelves.sortedWith(
+            compareByDescending<Shelf> { it.bookCount }
+                .thenByDescending { it.dateCreated }
+                .thenBy { it.name.lowercase() }
+        )
+        if (cleaned.isBlank()) {
+            ordered
+        } else {
+            ordered.filter { shelf ->
+                shelf.name.contains(cleaned, ignoreCase = true) ||
+                    shelf.description.contains(cleaned, ignoreCase = true)
+            }
+        }
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        dragHandle = {
+            BottomSheetDefaults.DragHandle(
+                color = MaterialTheme.colorScheme.outlineVariant
+            )
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 640.dp)
+                .navigationBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 12.dp, bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = searchError!!,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
+                        text = "Choose shelves",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "${selectedShelfIds.size} selected",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                
-                Text(
-                    "Book Details",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Title") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                
-                OutlinedTextField(
-                    value = author,
-                    onValueChange = { author = it },
-                    label = { Text("Author") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                
-                // Status Dropdown
-                ExposedDropdownMenuBox(
-                    expanded = isStatusExpanded,
-                    onExpandedChange = { isStatusExpanded = it },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    OutlinedTextField(
-                        value = selectedStatus.displayName,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Reading Status") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isStatusExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = isStatusExpanded,
-                        onDismissRequest = { isStatusExpanded = false }
-                    ) {
-                        ReadingStatus.values().forEach { status ->
-                            DropdownMenuItem(
-                                text = { Text(status.displayName) },
-                                onClick = {
-                                    selectedStatus = status
-                                    isStatusExpanded = false
-                                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close")
+                }
+            }
+
+            TextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                label = { Text("Search shelves") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = if (query.isNotBlank()) {
+                    {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
+                        }
+                    }
+                } else {
+                    null
+                },
+                singleLine = true,
+                shape = MaterialTheme.shapes.extraLarge,
+                colors = sheetTextFieldColors()
+            )
+
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (filteredShelves.isEmpty()) {
+                    item {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.extraLarge,
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            tonalElevation = 0.dp
+                        ) {
+                            Text(
+                                text = "No matching shelves.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp)
                             )
                         }
                     }
                 }
-                
-                OutlinedTextField(
-                    value = publisher,
-                    onValueChange = { publisher = it },
-                    label = { Text("Publisher") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                
-                OutlinedTextField(
-                    value = isbn,
-                    onValueChange = { isbn = it },
-                    label = { Text("ISBN") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                
-                OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
-                    label = { Text("Description") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 3,
-                    maxLines = 5
-                )
+
+                items(
+                    count = filteredShelves.size,
+                    key = { filteredShelves[it].id }
+                ) { index ->
+                    val shelf = filteredShelves[index]
+                    val selected = shelf.id in selectedShelfIds
+                    Surface(
+                        onClick = {
+                            onSelectedShelfIdsChange(
+                                if (selected) {
+                                    selectedShelfIds - shelf.id
+                                } else {
+                                    selectedShelfIds + shelf.id
+                                }
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.extraLarge,
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                        tonalElevation = 0.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    onSelectedShelfIdsChange(
+                                        if (selected) {
+                                            selectedShelfIds - shelf.id
+                                        } else {
+                                            selectedShelfIds + shelf.id
+                                        }
+                                    )
+                                },
+                                label = { Text(if (selected) "Added" else "Add") },
+                                colors = sheetFilterChipColors(),
+                                border = null,
+                                leadingIcon = if (selected) {
+                                    {
+                                        Icon(
+                                            Icons.Default.Check,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                } else {
+                                    null
+                                }
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = shelf.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = if (shelf.bookCount == 1) "1 book" else "${shelf.bookCount} books",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (shelf.description.isNotBlank()) {
+                                    Text(
+                                        text = shelf.description,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val finalBook = (fetchedBook ?: LibraryBook()).copy(
-                        title = title,
-                        author = author,
-                        publisher = publisher,
-                        isbn = isbn,
-                        description = description,
-                        status = selectedStatus.name
-                    )
-                    onConfirm(finalBook)
-                },
-                enabled = title.isNotBlank()
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color.Transparent,
+                tonalElevation = 0.dp
             ) {
-                Text(if (hasFile) "Save & Import" else "Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = onCreateNewShelf,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("New")
+                    }
+                    FilledTonalButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .weight(1.25f)
+                            .height(52.dp),
+                        shape = MaterialTheme.shapes.extraLarge
+                    ) {
+                        Text("Done")
+                    }
+                }
             }
         }
-    )
+    }
 }
 
 // Open Library Lists Content

@@ -41,7 +41,9 @@ data class LibraryBook(
     
     val publisher: String? = null,
     val localFilePath: String? = null,
-    val localFileFormat: BookFormat? = null
+    val localFileFormat: BookFormat? = null,
+    val publicReviewKey: String? = null,
+    val lastProgressUpdatedAt: Long? = null
 ) {
     @get:Exclude
     val readingStatusEnum: ReadingStatus

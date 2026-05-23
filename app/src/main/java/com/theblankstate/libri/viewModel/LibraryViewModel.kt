@@ -29,6 +29,8 @@ import com.theblankstate.libri.datamodel.BookSource
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
 import com.theblankstate.libri.datamodel.BookFormat
+import com.theblankstate.libri.util.IsbnUtils
+import com.theblankstate.libri.util.BookIdentity
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
@@ -378,6 +380,30 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             )
         }
     }
+
+    fun addBookToLibraryWithShelves(
+        uid: String,
+        book: LibraryBook,
+        shelfIds: List<String>,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            val result = libraryRepository.addBookToLibrary(uid, book)
+            result.fold(
+                onSuccess = {
+                    shelfIds.forEach { shelfId ->
+                        shelvesRepository.addBookToShelf(uid, book.id, shelfId)
+                    }
+                    onSuccess()
+                    if (book.isbn.isNullOrBlank() && !book.openLibraryId.isNullOrBlank()) {
+                        fetchAndUpdateIsbn(uid, book.id, book.openLibraryId)
+                    }
+                },
+                onFailure = { onError(it.message ?: "Failed to add book") }
+            )
+        }
+    }
     
     fun fetchAndUpdateIsbn(uid: String, bookId: String, openLibraryId: String) {
         viewModelScope.launch {
@@ -397,6 +423,14 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 // Silently fail - ISBN fetch is not critical
             }
+        }
+    }
+
+    fun ensurePublicReviewKey(uid: String, book: LibraryBook) {
+        if (!book.publicReviewKey.isNullOrBlank()) return
+        viewModelScope.launch {
+            val reviewKey = BookIdentity.forLibraryBook(book).key
+            libraryRepository.addBookToLibrary(uid, book.copy(publicReviewKey = reviewKey))
         }
     }
     
@@ -499,8 +533,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     fun fetchBookMetadata(query: String, onResult: (LibraryBook?) -> Unit) {
         viewModelScope.launch {
             try {
+                val normalizedIsbn = IsbnUtils.normalize(query)
                 // Try searching as ISBN first
-                var books = apiRepository.getbooks(isbn = query)
+                var books = if (normalizedIsbn != null) {
+                    apiRepository.getbooks(isbn = normalizedIsbn)
+                } else {
+                    apiRepository.getbooks(isbn = query)
+                }
                 if (books.isEmpty()) {
                     // Try as general query
                     books = apiRepository.getbooks(query = query)
@@ -510,7 +549,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 if (bookModel != null) {
                     // Fetch full work details for description
                     var description = bookModel.firstSentence?.firstOrNull()
-                    var isbn = bookModel.isbn?.firstOrNull()
+                    var isbn = normalizedIsbn ?: bookModel.isbn?.firstOrNull()
                     var publisher = bookModel.publisher?.firstOrNull()
                     var totalPages = bookModel.number_of_pages ?: 0
                     
@@ -580,7 +619,12 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun importLibraryBook(uid: String, uri: android.net.Uri, metadata: LibraryBook) {
+    fun importLibraryBook(
+        uid: String,
+        uri: android.net.Uri,
+        metadata: LibraryBook,
+        shelfIds: List<String> = emptyList()
+    ) {
         viewModelScope.launch {
             // Save file using DownloadsRepository
             val downloadedBook = downloadsRepository.importBook(uri, metadata.title)
@@ -598,6 +642,9 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                 )
                 
                 libraryRepository.addBookToLibrary(uid, libraryBook)
+                shelfIds.forEach { shelfId ->
+                    shelvesRepository.addBookToShelf(uid, libraryBook.id, shelfId)
+                }
                 refreshDownloads()
             }
         }

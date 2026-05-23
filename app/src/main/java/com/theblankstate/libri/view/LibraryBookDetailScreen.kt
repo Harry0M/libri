@@ -35,8 +35,16 @@ import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.view.components.TopBarActionButton
 import coil.compose.AsyncImage
 import com.theblankstate.libri.datamodel.BookFormat
+import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
+import com.theblankstate.libri.datamodel.BookReview
+import com.theblankstate.libri.data.ReviewsRepository
+import com.theblankstate.libri.util.BookIdentity
+import com.theblankstate.libri.view.components.CreateShelfDialog
+import com.theblankstate.libri.view.components.ReadingStatsCard
+import com.theblankstate.libri.view.components.ReviewsSection
 import com.theblankstate.libri.viewModel.LibraryViewModel
+import com.theblankstate.libri.viewModel.ShelvesViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -70,9 +78,21 @@ fun LibraryBookDetailScreen(
     var commentText by remember { mutableStateOf("") }
     var currentRating by remember { mutableStateOf(0f) }
     var showBorrowDialog by remember { mutableStateOf(false) }
+    var showShelvesSheet by remember { mutableStateOf(false) }
+    var showCreateShelfDialog by remember { mutableStateOf(false) }
+
+    // Reviews state
+    val reviewsRepository = remember { ReviewsRepository() }
+    var reviews by remember { mutableStateOf<List<BookReview>>(emptyList()) }
+    val userName = remember { userPreferencesRepository.getGoogleUser().second ?: "Reader" }
+    val shelvesViewModel: ShelvesViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val allShelves by shelvesViewModel.allShelves.collectAsStateWithLifecycle()
+    val shelvesForBook by shelvesViewModel.shelvesForBook.collectAsStateWithLifecycle()
 
     val book = selectedBook ?: return
     val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val reviewIdentity = remember(book) { BookIdentity.forLibraryBook(book) }
+    val legacyReviewIsbn = remember(book) { BookIdentity.legacyIsbnKey(book) }
 
     LaunchedEffect(book) {
         currentPageInput = book.currentPage.toString()
@@ -85,6 +105,23 @@ fun LibraryBookDetailScreen(
             uid?.let { userId ->
                 viewModel.fetchAndUpdateBookDetails(userId, book)
             }
+        }
+        uid?.let { userId ->
+            viewModel.ensurePublicReviewKey(userId, book)
+        }
+    }
+
+    LaunchedEffect(uid, book.id) {
+        uid?.let { userId ->
+            shelvesViewModel.loadShelves(userId)
+            shelvesViewModel.loadShelvesForBook(userId, book.id)
+        }
+    }
+
+    // Collect reviews for this book's canonical public key, with legacy ISBN reads.
+    LaunchedEffect(reviewIdentity.key, legacyReviewIsbn) {
+        reviewsRepository.getReviewsForBook(reviewIdentity.key, legacyReviewIsbn).collect { fetchedReviews ->
+            reviews = fetchedReviews
         }
     }
 
@@ -543,170 +580,63 @@ fun LibraryBookDetailScreen(
 
                     // Reading Progress Card
                     Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = Color.Transparent,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showShelvesSheet = true },
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                         shape = RoundedCornerShape(16.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp)
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Icon(
-                                    Icons.Default.AutoStories,
-                                    "Reading Progress",
+                                    Icons.Default.Folder,
+                                    "Shelves",
                                     tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
-                                Text(
-                                    "Reading Progress",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            if (book.totalPages > 0 && book.readingStatusEnum != ReadingStatus.WANT_TO_READ) {
-                                // Circular Progress Indicator
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Box(
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        CircularProgressIndicator(
-                                            progress = (book.readingProgress / 100f),
-                                            modifier = Modifier.size(120.dp),
-                                            strokeWidth = 12.dp,
-                                            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                            strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally
-                                        ) {
-                                            Text(
-                                                text = "${book.readingProgress.toInt()}%",
-                                                style = MaterialTheme.typography.headlineMedium,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.primary
-                                            )
-                                            Text(
-                                                text = if (book.readingStatusEnum == ReadingStatus.FINISHED) "Complete" else "Read",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                }
-                                Spacer(modifier = Modifier.height(24.dp))
-                            }
-                            
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Current Page Input
-                                Column(modifier = Modifier.weight(1f)) {
+                                Column {
                                     Text(
-                                        "Current Page",
+                                        "Shelves",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    TextField(
-                                        value = currentPageInput,
-                                        onValueChange = {
-                                            currentPageInput = it
-                                            val current = it.toIntOrNull() ?: 0
-                                            val total = totalPagesInput.toIntOrNull() ?: 0
-                                            // Allow update even if total is 0, but prefer having total
-                                            uid?.let { userId ->
-                                                viewModel.updateReadingProgress(
-                                                    userId,
-                                                    book.id,
-                                                    current,
-                                                    total
-                                                )
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = TextFieldDefaults.colors(
-                                            focusedIndicatorColor = Color.Transparent,
-                                            unfocusedIndicatorColor = Color.Transparent,
-                                            disabledIndicatorColor = Color.Transparent,
-                                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                        ),
-                                        shape = RoundedCornerShape(12.dp),
-                                        singleLine = true,
-                                        textStyle = MaterialTheme.typography.titleMedium.copy(
-                                            textAlign = TextAlign.Center,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                                        )
-                                    )
-                                }
-
-                                Text(
-                                    "/",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.padding(top = 24.dp)
-                                )
-
-                                // Total Pages Input
-                                Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        "Total Pages",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
-                                    )
-                                    TextField(
-                                        value = totalPagesInput,
-                                        onValueChange = {
-                                            totalPagesInput = it
-                                            val current = currentPageInput.toIntOrNull() ?: 0
-                                            val total = it.toIntOrNull() ?: 0
-                                            uid?.let { userId ->
-                                                viewModel.updateReadingProgress(
-                                                    userId,
-                                                    book.id,
-                                                    current,
-                                                    total
-                                                )
-                                            }
-                                        },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        colors = TextFieldDefaults.colors(
-                                            focusedIndicatorColor = Color.Transparent,
-                                            unfocusedIndicatorColor = Color.Transparent,
-                                            disabledIndicatorColor = Color.Transparent,
-                                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                        ),
-                                        shape = RoundedCornerShape(12.dp),
-                                        singleLine = true,
-                                        textStyle = MaterialTheme.typography.titleMedium.copy(
-                                            textAlign = TextAlign.Center,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                                        )
+                                        if (shelvesForBook.isEmpty()) "Not on any shelf" else shelvesForBook.joinToString { it.name },
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                             }
+                            Icon(Icons.Default.ChevronRight, "Manage shelves")
                         }
                     }
+
+                    ReadingProgressEditor(
+                        book = book,
+                        currentPageInput = currentPageInput,
+                        totalPagesInput = totalPagesInput,
+                        onCurrentPageInputChange = { currentPageInput = it },
+                        onTotalPagesInputChange = { totalPagesInput = it },
+                        onSaveProgress = { current, total ->
+                            uid?.let { userId ->
+                                viewModel.updateReadingProgress(userId, book.id, current, total)
+                            }
+                        },
+                        onStatusChange = { status ->
+                            uid?.let { userId ->
+                                viewModel.updateReadingStatus(userId, book.id, status)
+                            }
+                        }
+                    )
 
                     // Rating Card
                     Surface(
@@ -834,6 +764,43 @@ fun LibraryBookDetailScreen(
                             )
                         }
                     }
+
+                    // Reading Stats Card (only for books being read)
+                    if (book.readingStatusEnum == ReadingStatus.IN_PROGRESS &&
+                        book.totalPages > 0 && book.currentPage > 0
+                    ) {
+                        ReadingStatsCard(book = book)
+                    }
+
+                    // Community Reviews Section
+                    ReviewsSection(
+                        reviews = reviews,
+                        currentUserUid = uid,
+                        currentUserName = userName,
+                        onSubmitReview = { rating, text ->
+                            val reviewUid = uid ?: return@ReviewsSection
+                            val review = BookReview(
+                                uid = reviewUid,
+                                userName = userName,
+                                rating = rating,
+                                reviewText = text,
+                                reviewKey = reviewIdentity.key,
+                                bookIdentityType = reviewIdentity.type.name,
+                                bookTitle = book.title,
+                                bookAuthor = book.author,
+                                bookCoverUrl = book.coverUrl
+                            )
+                            coroutineScope.launch {
+                                reviewsRepository.submitReview(reviewIdentity.key, review, legacyReviewIsbn)
+                            }
+                        },
+                        onDeleteReview = {
+                            val reviewUid = uid ?: return@ReviewsSection
+                            coroutineScope.launch {
+                                reviewsRepository.deleteReview(reviewIdentity.key, reviewUid, legacyReviewIsbn)
+                            }
+                        }
+                    )
 
                     // Timeline Card
                     Surface(
@@ -1264,6 +1231,92 @@ fun LibraryBookDetailScreen(
             )
         }
 
+        if (showShelvesSheet) {
+            ModalBottomSheet(
+                onDismissRequest = { showShelvesSheet = false },
+                dragHandle = { BottomSheetDefaults.DragHandle() }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .padding(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "Manage Shelves",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (allShelves.isEmpty()) {
+                        Text(
+                            "Create a shelf to organize this book.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        allShelves.forEach { shelf ->
+                            val selected = shelvesForBook.any { it.id == shelf.id }
+                            FilterChip(
+                                selected = selected,
+                                onClick = {
+                                    uid?.let { userId ->
+                                        if (selected) {
+                                            shelvesViewModel.removeBookFromShelf(
+                                                uid = userId,
+                                                bookId = book.id,
+                                                shelfId = shelf.id,
+                                                onSuccess = { shelvesViewModel.loadShelvesForBook(userId, book.id) }
+                                            )
+                                        } else {
+                                            shelvesViewModel.addBookToShelf(
+                                                uid = userId,
+                                                bookId = book.id,
+                                                shelfId = shelf.id,
+                                                onSuccess = { shelvesViewModel.loadShelvesForBook(userId, book.id) }
+                                            )
+                                        }
+                                    }
+                                },
+                                label = { Text(shelf.name) },
+                                leadingIcon = if (selected) {
+                                    { Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp)) }
+                                } else null
+                            )
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { showCreateShelfDialog = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Create Shelf")
+                    }
+                }
+            }
+        }
+
+        if (showCreateShelfDialog) {
+            CreateShelfDialog(
+                onDismiss = { showCreateShelfDialog = false },
+                onConfirm = { name, description ->
+                    uid?.let { userId ->
+                        shelvesViewModel.createShelf(
+                            uid = userId,
+                            name = name,
+                            description = description,
+                            onSuccess = {
+                                showCreateShelfDialog = false
+                                shelvesViewModel.loadShelves(userId)
+                            }
+                        )
+                    }
+                }
+            )
+        }
+
         // Delete Confirmation Dialog
         if (showDeleteDialog) {
             AlertDialog(
@@ -1381,6 +1434,221 @@ fun LibraryBookDetailScreen(
                     }
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun ReadingProgressEditor(
+    book: LibraryBook,
+    currentPageInput: String,
+    totalPagesInput: String,
+    onCurrentPageInputChange: (String) -> Unit,
+    onTotalPagesInputChange: (String) -> Unit,
+    onSaveProgress: (Int, Int) -> Unit,
+    onStatusChange: (ReadingStatus) -> Unit
+) {
+    fun clean(value: String): String = value.filter { it.isDigit() }.take(5)
+    fun current(): Int = currentPageInput.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    fun total(): Int = totalPagesInput.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    fun save(current: Int = current(), total: Int = total()) {
+        val safeTotal = total.coerceAtLeast(0)
+        val safeCurrent = if (safeTotal > 0) current.coerceIn(0, safeTotal) else current.coerceAtLeast(0)
+        onCurrentPageInputChange(safeCurrent.toString())
+        onTotalPagesInputChange(safeTotal.toString())
+        onSaveProgress(safeCurrent, safeTotal)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    Icons.Default.AutoStories,
+                    "Reading Progress",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Text(
+                    "Reading Progress",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            if (total() > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(
+                            progress = if (total() > 0) current().coerceAtMost(total()).toFloat() / total() else 0f,
+                            modifier = Modifier.size(116.dp),
+                            strokeWidth = 12.dp,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            strokeCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "${((current().coerceAtMost(total()).toFloat() / total()) * 100).toInt()}%",
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "${current().coerceAtMost(total())}/${total()}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                Slider(
+                    value = current().coerceAtMost(total()).toFloat(),
+                    onValueChange = { value -> onCurrentPageInputChange(value.toInt().toString()) },
+                    onValueChangeFinished = { save() },
+                    valueRange = 0f..total().toFloat(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Current Page",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                    )
+                    TextField(
+                        value = currentPageInput,
+                        onValueChange = { onCurrentPageInputChange(clean(it)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = TextFieldDefaults.colors(
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent,
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.titleMedium.copy(
+                            textAlign = TextAlign.Center,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        )
+                    )
+                }
+
+                Text(
+                    "/",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(top = 24.dp)
+                )
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "Total Pages",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp, start = 4.dp)
+                    )
+                    TextField(
+                        value = totalPagesInput,
+                        onValueChange = { onTotalPagesInputChange(clean(it)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = TextFieldDefaults.colors(
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            disabledIndicatorColor = Color.Transparent,
+                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.titleMedium.copy(
+                            textAlign = TextAlign.Center,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilledTonalButton(
+                    onClick = {
+                        onStatusChange(ReadingStatus.IN_PROGRESS)
+                        save(current = current().coerceAtLeast(1))
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Start")
+                }
+                FilledTonalButton(
+                    onClick = { save(current = current() + 10) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("+10")
+                }
+                FilledTonalButton(
+                    onClick = { save(current = total(), total = total()) },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Finish")
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        onStatusChange(ReadingStatus.WANT_TO_READ)
+                        save(current = 0, total = total())
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Reset")
+                }
+                Button(
+                    onClick = { save() },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Save Progress")
+                }
+            }
         }
     }
 }

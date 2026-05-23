@@ -83,4 +83,12 @@ dependencies {
     // Security - Encrypted SharedPreferences for session tokens
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
+    // ML Kit Barcode Scanning (bundled model — works offline)
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
+    // CameraX for barcode scanner camera preview
+    implementation("androidx.camera:camera-camera2:1.4.1")
+    implementation("androidx.camera:camera-lifecycle:1.4.1")
+    implementation("androidx.camera:camera-view:1.4.1")
+
 }
