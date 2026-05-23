@@ -80,6 +80,7 @@ fun LibraryBookDetailScreen(
     var showBorrowDialog by remember { mutableStateOf(false) }
     var showShelvesSheet by remember { mutableStateOf(false) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
+    var showMetadataSheet by remember { mutableStateOf(false) }
 
     // Reviews state
     val reviewsRepository = remember { ReviewsRepository() }
@@ -191,6 +192,11 @@ fun LibraryBookDetailScreen(
                             icon = Icons.Default.Info,
                             contentDescription = "Details",
                             modifier = Modifier.padding(8.dp)
+                        )
+                        TopBarActionButton(
+                            onClick = { showMetadataSheet = true },
+                            icon = Icons.Default.Edit,
+                            contentDescription = "Improve Details"
                         )
 
                         // Read/Download/Delete/Share/Remove icons to mirror list menu
@@ -903,8 +909,7 @@ fun LibraryBookDetailScreen(
                     }
                     
                     // ISBN and Book Details Card
-                    if (!book.isbn.isNullOrEmpty() || !book.openLibraryId.isNullOrEmpty()) {
-                        ElevatedCard(
+                    ElevatedCard(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(20.dp),
                             colors = CardDefaults.elevatedCardColors(
@@ -934,36 +939,44 @@ fun LibraryBookDetailScreen(
                                         )
                                     }
                                     
-                                    // Show Fetch ISBN button if ISBN is missing but Open Library ID exists
-                                    if (book.isbn.isNullOrEmpty() && !book.openLibraryId.isNullOrEmpty()) {
-                                        var isFetchingIsbn by remember { mutableStateOf(false) }
-                                        
-                                        FilledTonalButton(
-                                            onClick = {
-                                                uid?.let { userId ->
-                                                    isFetchingIsbn = true
-                                                    viewModel.fetchAndUpdateIsbn(userId, book.id, book.openLibraryId)
-                                                }
-                                            },
-                                            enabled = !isFetchingIsbn && uid != null,
-                                            shape = RoundedCornerShape(12.dp)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FilledTonalIconButton(
+                                            onClick = { showMetadataSheet = true }
                                         ) {
-                                            if (isFetchingIsbn) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(18.dp),
-                                                    strokeWidth = 2.dp
+                                            Icon(Icons.Default.Edit, contentDescription = "Improve details")
+                                        }
+
+                                        // Show Fetch ISBN button if ISBN is missing but Open Library ID exists
+                                        if (book.isbn.isNullOrEmpty() && !book.openLibraryId.isNullOrEmpty()) {
+                                            var isFetchingIsbn by remember { mutableStateOf(false) }
+
+                                            FilledTonalButton(
+                                                onClick = {
+                                                    uid?.let { userId ->
+                                                        isFetchingIsbn = true
+                                                        viewModel.fetchAndUpdateIsbn(userId, book.id, book.openLibraryId)
+                                                    }
+                                                },
+                                                enabled = !isFetchingIsbn && uid != null,
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                if (isFetchingIsbn) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(18.dp),
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                    Spacer(modifier = Modifier.width(8.dp))
+                                                }
+                                                Icon(
+                                                    Icons.Default.CloudDownload,
+                                                    null,
+                                                    modifier = Modifier.size(18.dp)
                                                 )
-                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    if (isFetchingIsbn) "Fetching..." else "Fetch ISBN"
+                                                )
                                             }
-                                            Icon(
-                                                Icons.Default.CloudDownload,
-                                                null,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(4.dp))
-                                            Text(
-                                                if (isFetchingIsbn) "Fetching..." else "Fetch ISBN"
-                                            )
                                         }
                                     }
                                 }
@@ -1074,6 +1087,39 @@ fun LibraryBookDetailScreen(
                                                             color = MaterialTheme.colorScheme.onSecondaryContainer
                                                         )
                                                     }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (book.isbn.isNullOrEmpty() && book.openLibraryId.isNullOrEmpty()) {
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(12.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.AutoFixHigh,
+                                                    "Improve details",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                                Column {
+                                                    Text(
+                                                        "Metadata",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                                    )
+                                                    Text(
+                                                        "Add an ISBN or Open Library ID to auto-fill cover, author, description, and pages.",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
                                                 }
                                             }
                                         }
@@ -1317,6 +1363,43 @@ fun LibraryBookDetailScreen(
             )
         }
 
+        if (showMetadataSheet) {
+            ImportBookDialog(
+                onDismiss = { showMetadataSheet = false },
+                onConfirm = { metadata ->
+                    uid?.let { userId ->
+                        viewModel.updateLibraryBookMetadata(
+                            uid = userId,
+                            current = book,
+                            metadata = metadata,
+                            onSuccess = { showMetadataSheet = false }
+                        )
+                    } ?: run {
+                        showMetadataSheet = false
+                    }
+                },
+                viewModel = viewModel,
+                hasFile = false,
+                initialSearchQuery = book.isbn ?: book.openLibraryId.orEmpty(),
+                initialBook = book,
+                shelves = allShelves,
+                onCreateNewShelf = { showCreateShelfDialog = true },
+                onConfirmWithShelves = { metadata, shelfIds ->
+                    uid?.let { userId ->
+                        viewModel.updateLibraryBookMetadata(
+                            uid = userId,
+                            current = book,
+                            metadata = metadata,
+                            shelfIds = shelfIds,
+                            onSuccess = { showMetadataSheet = false }
+                        )
+                    } ?: run {
+                        showMetadataSheet = false
+                    }
+                }
+            )
+        }
+
         // Delete Confirmation Dialog
         if (showDeleteDialog) {
             AlertDialog(
@@ -1436,7 +1519,6 @@ fun LibraryBookDetailScreen(
             )
         }
     }
-}
 
 @Composable
 private fun ReadingProgressEditor(
@@ -1510,8 +1592,8 @@ private fun ReadingProgressEditor(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        }
                     }
+                }
                 }
                 Slider(
                     value = current().coerceAtMost(total()).toFloat(),

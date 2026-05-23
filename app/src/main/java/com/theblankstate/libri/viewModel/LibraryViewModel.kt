@@ -632,13 +632,13 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             if (downloadedBook != null) {
                 // Create LibraryBook with metadata and local file path
                 val libraryBook = metadata.copy(
-                    id = java.util.UUID.randomUUID().toString(),
+                    id = downloadedBook.id,
                     localFilePath = downloadedBook.filePath,
                     localFileFormat = downloadedBook.format,
                     dateAdded = System.currentTimeMillis(),
                     // Ensure title/author are set if metadata was empty
                     title = if (metadata.title.isBlank()) downloadedBook.title else metadata.title,
-                    author = if (metadata.author.isBlank()) "Imported" else metadata.author
+                    author = if (metadata.author.isBlank()) "Local book" else metadata.author
                 )
                 
                 libraryRepository.addBookToLibrary(uid, libraryBook)
@@ -646,6 +646,137 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     shelvesRepository.addBookToShelf(uid, libraryBook.id, shelfId)
                 }
                 refreshDownloads()
+            }
+        }
+    }
+
+    fun scanLocalBooksFromFolder(
+        uid: String,
+        treeUri: android.net.Uri,
+        onComplete: (found: Int, added: Int) -> Unit = { _, _ -> },
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val discovered = withContext(Dispatchers.IO) {
+                    downloadsRepository.scanFolder(treeUri)
+                }
+                val added = addDiscoveredLocalBooks(uid, discovered)
+                refreshDownloads()
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "Found ${discovered.size} local books, added $added new", Toast.LENGTH_LONG).show()
+                    onComplete(discovered.size, added)
+                }
+            } catch (e: Exception) {
+                val message = e.message ?: "Failed to scan folder"
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    onError(message)
+                }
+            }
+        }
+    }
+
+    fun scanLocalBooksFromDevice(
+        uid: String,
+        onComplete: (found: Int, added: Int) -> Unit = { _, _ -> },
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val discovered = withContext(Dispatchers.IO) {
+                    downloadsRepository.scanDeviceBooks()
+                }
+                val added = addDiscoveredLocalBooks(uid, discovered)
+                refreshDownloads()
+                withContext(Dispatchers.Main) {
+                    val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        "Use folder access for more locations on this Android version."
+                    } else {
+                        null
+                    }
+                    Toast.makeText(
+                        context,
+                        "Found ${discovered.size} local books, added $added new" + (hint?.let { "\n$it" } ?: ""),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    onComplete(discovered.size, added)
+                }
+            } catch (e: Exception) {
+                val message = e.message ?: "Failed to scan local books"
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    onError(message)
+                }
+            }
+        }
+    }
+
+    private suspend fun addDiscoveredLocalBooks(uid: String, discovered: List<DownloadedBook>): Int {
+        val existingIds = allBooks.mapTo(HashSet()) { it.id }
+        val existingPaths = allBooks.mapNotNullTo(HashSet()) { it.localFilePath }
+        var added = 0
+
+        discovered.distinctBy { it.fileUri ?: it.filePath }.forEach { downloaded ->
+            val localPath = downloaded.fileUri ?: downloaded.filePath
+            if (downloaded.id in existingIds || localPath in existingPaths) return@forEach
+
+            val libraryBook = LibraryBook(
+                id = downloaded.id,
+                title = downloaded.title,
+                author = downloaded.author,
+                coverUrl = downloaded.coverUrl,
+                status = ReadingStatus.WANT_TO_READ.name,
+                dateAdded = downloaded.timestamp,
+                localFilePath = localPath,
+                localFileFormat = downloaded.format
+            )
+            libraryRepository.addBookToLibrary(uid, libraryBook)
+            existingIds += downloaded.id
+            existingPaths += localPath
+            added++
+        }
+
+        return added
+    }
+
+    fun updateLibraryBookMetadata(
+        uid: String,
+        current: LibraryBook,
+        metadata: LibraryBook,
+        shelfIds: List<String> = emptyList(),
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            try {
+                val updated = current.copy(
+                    title = metadata.title.ifBlank { current.title },
+                    author = metadata.author.ifBlank { current.author },
+                    coverUrl = metadata.coverUrl ?: current.coverUrl,
+                    description = metadata.description ?: current.description,
+                    isbn = metadata.isbn ?: current.isbn,
+                    openLibraryId = metadata.openLibraryId ?: current.openLibraryId,
+                    internetArchiveId = metadata.internetArchiveId ?: current.internetArchiveId,
+                    gutenbergId = metadata.gutenbergId ?: current.gutenbergId,
+                    ebookAccess = metadata.ebookAccess ?: current.ebookAccess,
+                    publisher = metadata.publisher ?: current.publisher,
+                    totalPages = if (metadata.totalPages > 0) metadata.totalPages else current.totalPages,
+                    publicReviewKey = null
+                )
+                val result = libraryRepository.addBookToLibrary(uid, updated)
+                result.fold(
+                    onSuccess = {
+                        shelfIds.forEach { shelfId ->
+                            shelvesRepository.addBookToShelf(uid, current.id, shelfId)
+                        }
+                        _selectedBook.value = updated
+                        onSuccess()
+                    },
+                    onFailure = { onError(it.message ?: "Failed to update book details") }
+                )
+            } catch (e: Exception) {
+                onError(e.message ?: "Failed to update book details")
             }
         }
     }
@@ -1099,7 +1230,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         bookId: String,
         bookTitle: String,
         mimeType: String = "application/pdf",
-        subFolder: String = "Scribe/Books"
+        subFolder: String = DownloadsRepository.DOWNLOADS_SUBFOLDER
     ): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
@@ -1180,7 +1311,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
     
-    private suspend fun tryAlternativeDownload(url: String, filename: String, bookId: String, bookTitle: String, mimeType: String = "application/pdf", subFolder: String = "Scribe/Books"): String? = withContext(Dispatchers.IO) {
+    private suspend fun tryAlternativeDownload(url: String, filename: String, bookId: String, bookTitle: String, mimeType: String = "application/pdf", subFolder: String = DownloadsRepository.DOWNLOADS_SUBFOLDER): String? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
                 .url(url)

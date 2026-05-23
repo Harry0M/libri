@@ -3,15 +3,14 @@ package com.theblankstate.libri.view
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.BottomSheetDefaults
@@ -136,25 +135,14 @@ fun ShelvesScreen(
                             )
                         }
                     } else {
-                        // Shelves grid
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            modifier = Modifier.fillMaxSize(),
-                            contentPadding = PaddingValues(16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(state.shelves, key = { it.id }) { shelf ->
-                                ShelfCard(
-                                    shelf = shelf,
-                                    onClick = { onShelfClick(shelf.id) },
-                                    onLongClick = {
-                                        selectedShelf = shelf
-                                        showOptionsSheet = true
-                                    }
-                                )
+                        ShelvesList(
+                            shelves = state.shelves,
+                            onShelfClick = { shelf -> onShelfClick(shelf.id) },
+                            onShelfOptionsClick = { shelf ->
+                                selectedShelf = shelf
+                                showOptionsSheet = true
                             }
-                        }
+                        )
                     }
                 }
             }
@@ -324,66 +312,112 @@ fun ShelvesScreen(
     }
 }
 
+@Composable
+private fun ShelvesList(
+    shelves: List<Shelf>,
+    onShelfClick: (Shelf) -> Unit,
+    onShelfOptionsClick: (Shelf) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(shelves, key = { it.id }) { shelf ->
+            ShelfListItem(
+                shelf = shelf,
+                onOpenClick = { onShelfClick(shelf) },
+                onOptionsClick = { onShelfOptionsClick(shelf) }
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ShelfCard(
+private fun ShelfListItem(
     shelf: Shelf,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onOpenClick: () -> Unit,
+    onOptionsClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = Modifier
+    ElevatedCard(
+        modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(1f)
             .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
+                onClick = onOpenClick,
+                onLongClick = onOptionsClick
             ),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer
-        )
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .fillMaxWidth()
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.Default.Folder,
-                contentDescription = null,
-                modifier = Modifier.size(40.dp),
-                tint = MaterialTheme.colorScheme.onSecondaryContainer
-            )
-
-            Column {
-                Text(
-                    shelf.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    "${shelf.bookCount} book${if (shelf.bookCount != 1) "s" else ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
-                )
-                if (shelf.description.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        shelf.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.6f)
+            Surface(
+                modifier = Modifier.size(56.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                tonalElevation = 0.dp
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.Folder,
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
             }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(vertical = 2.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    shelf.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "${shelf.bookCount} book${if (shelf.bookCount != 1) "s" else ""}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (shelf.description.isNotBlank()) {
+                    Text(
+                        shelf.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            FilledTonalButton(
+                onClick = onOpenClick,
+                shape = MaterialTheme.shapes.extraLarge
+            ) {
+                Text("Open")
+            }
+            IconButton(
+                onClick = onOptionsClick,
+                shape = MaterialTheme.shapes.extraLarge
+            ) {
+                Icon(Icons.Default.MoreVert, contentDescription = "Shelf options")
+            }
         }
     }
-
-    
 }

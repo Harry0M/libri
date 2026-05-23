@@ -45,6 +45,7 @@ import com.theblankstate.libri.data.OpenLibraryListItem
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
 import com.theblankstate.libri.datamodel.Shelf
+import com.theblankstate.libri.util.BookFileUtils
 import com.theblankstate.libri.view.components.AddBookEntrySheet
 import com.theblankstate.libri.view.components.CreateShelfDialog
 import com.theblankstate.libri.viewModel.LibraryViewModel
@@ -122,6 +123,21 @@ fun LibraryScreen(
     ) { isGranted ->
         hasNotificationPermission = isGranted
     }
+
+    val localScanPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        val userId = uid
+        if (isGranted && userId != null) {
+            viewModel.scanLocalBooksFromDevice(userId)
+        } else if (!isGranted) {
+            android.widget.Toast.makeText(
+                context,
+                "Storage permission is needed to scan local books on this Android version.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+    }
     
     // Request notification permission on first composition for Android 13+
     LaunchedEffect(Unit) {
@@ -150,18 +166,49 @@ fun LibraryScreen(
     }
 
     val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: android.net.Uri? ->
         uri?.let {
-            val mimeType = try { context.contentResolver.getType(it) ?: "" } catch (e: Exception) { "" }
-            val path = it.path?.lowercase() ?: ""
-            val isPdf = mimeType.contains("pdf") || path.endsWith(".pdf")
-            val isEpub = mimeType.contains("epub") || path.endsWith(".epub")
-            if (isPdf || isEpub) {
+            if (BookFileUtils.isSupported(context, it)) {
                 importUri = it
                 showImportDialog = true
             } else {
-                android.widget.Toast.makeText(context, "Please select a PDF or EPUB file.", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "Please select a PDF, EPUB, TXT, or HTML file.", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val folderScanLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: android.net.Uri? ->
+        val userId = uid
+        if (uri != null && userId != null) {
+            viewModel.scanLocalBooksFromFolder(userId, uri)
+        }
+    }
+
+    fun scanLocalBooks() {
+        val userId = uid
+        if (userId == null) {
+            android.widget.Toast.makeText(context, "Sign in to add local books to your library.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            android.widget.Toast.makeText(
+                context,
+                "Android 13+ needs folder access for document files. Choose the folder that contains your books.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            folderScanLauncher.launch(null)
+        } else {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                viewModel.scanLocalBooksFromDevice(userId)
+            } else {
+                localScanPermissionLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
             }
         }
     }
@@ -318,7 +365,7 @@ fun LibraryScreen(
                         }
                     }
                     
-                    // Downloads Chip
+                    // Local files chip
                     item {
                         FilterChip(
                             selected = showDownloads,
@@ -326,7 +373,7 @@ fun LibraryScreen(
                                 viewModel.setShowDownloads(!showDownloads)
                                 showOpenLibrary = false
                             },
-                            label = { Text("Downloads") },
+                            label = { Text("Local") },
                             shape = CircleShape,
                             colors = FilterChipDefaults.filterChipColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -337,7 +384,25 @@ fun LibraryScreen(
                             border = null
                         )
                     }
-                    
+
+                    // Shelves chip - navigates to the Shelves screen (4th chip)
+                    if (uid != null) {
+                        item {
+                            FilterChip(
+                                selected = false,
+                                onClick = { onShelvesClick() },
+                                label = { Text("My Shelves") },
+                                leadingIcon = { Icon(Icons.Default.Folder, null, Modifier.size(16.dp)) },
+                                shape = CircleShape,
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                border = null
+                            )
+                        }
+                    }
+
                     // Status Filter Chips
                     items(
                         count = ReadingStatus.values().size,
@@ -360,24 +425,6 @@ fun LibraryScreen(
                             ),
                             border = null
                         )
-                    }
-
-                    // Shelves chip - navigates to the Shelves screen (only if signed in)
-                    if (uid != null) {
-                        item {
-                            FilterChip(
-                                selected = false,
-                                onClick = { onShelvesClick() },
-                                label = { Text("My Shelves") },
-                                leadingIcon = { Icon(Icons.Default.Folder, null, Modifier.size(16.dp)) },
-                                shape = CircleShape,
-                                colors = FilterChipDefaults.filterChipColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                    labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                ),
-                                border = null
-                            )
-                        }
                     }
                 }
 
@@ -416,24 +463,88 @@ fun LibraryScreen(
                             )
                             
                             Text(
-                                "No Downloaded Books",
+                                "No Local Books",
                                 style = MaterialTheme.typography.headlineMedium.copy(
                                     fontWeight = FontWeight.Bold
                                 ),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                "Books you download will appear here",
+                                "Downloaded and local books you import or scan will appear here.",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
                             )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                FilledTonalButton(
+                                    onClick = { launcher.launch(BookFileUtils.supportedMimeTypes) },
+                                    modifier = Modifier.weight(1f),
+                                    shape = MaterialTheme.shapes.extraLarge,
+                                    contentPadding = PaddingValues(horizontal = 10.dp)
+                                ) {
+                                    Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Import")
+                                }
+                                FilledTonalButton(
+                                    onClick = ::scanLocalBooks,
+                                    modifier = Modifier.weight(1f),
+                                    shape = MaterialTheme.shapes.extraLarge,
+                                    contentPadding = PaddingValues(horizontal = 10.dp)
+                                ) {
+                                    Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Scan local files")
+                                }
+                            }
                         }
                     }
                 } else {
                     androidx.compose.foundation.lazy.LazyColumn(
-                        contentPadding = PaddingValues(bottom = 104.dp)
+                        contentPadding = PaddingValues(start = 16.dp, top = 4.dp, end = 16.dp, bottom = 104.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        item {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = MaterialTheme.shapes.extraLarge,
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                tonalElevation = 0.dp
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    FilledTonalButton(
+                                        onClick = { launcher.launch(BookFileUtils.supportedMimeTypes) },
+                                        modifier = Modifier.weight(1f),
+                                        shape = MaterialTheme.shapes.extraLarge,
+                                        contentPadding = PaddingValues(horizontal = 10.dp)
+                                    ) {
+                                        Icon(Icons.Default.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Import")
+                                    }
+                                    FilledTonalButton(
+                                        onClick = ::scanLocalBooks,
+                                        modifier = Modifier.weight(1f),
+                                        shape = MaterialTheme.shapes.extraLarge,
+                                        contentPadding = PaddingValues(horizontal = 10.dp)
+                                    ) {
+                                        Icon(Icons.Default.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Scan local files")
+                                    }
+                                }
+                            }
+                        }
                         items(
                             count = downloadedBooks.size,
                             key = { downloadedBooks[it].id }
@@ -943,7 +1054,7 @@ fun LibraryScreen(
                 },
                 onImportFile = {
                     showAddOptions = false
-                    launcher.launch("*/*")
+                    launcher.launch(BookFileUtils.supportedMimeTypes)
                 },
                 onSearchOnline = {
                     showAddOptions = false
@@ -1706,7 +1817,7 @@ fun DownloadedBookListItem(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = "Downloaded",
+                text = "${book.source.displayName} - ${book.format.name}",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.tertiary
             )
@@ -1857,18 +1968,19 @@ fun ImportBookDialog(
     hasFile: Boolean = true,
     initialSearchQuery: String = "",
     autoFetchInitialQuery: Boolean = false,
+    initialBook: LibraryBook? = null,
     shelves: List<Shelf> = emptyList(),
     onCreateNewShelf: () -> Unit = {},
     onScanIsbn: (() -> Unit)? = null,
     onConfirmWithShelves: ((LibraryBook, List<String>) -> Unit)? = null
 ) {
     var searchQuery by remember(initialSearchQuery) { mutableStateOf(initialSearchQuery) }
-    var title by remember { mutableStateOf("") }
-    var author by remember { mutableStateOf("") }
-    var publisher by remember { mutableStateOf("") }
-    var isbn by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
-    var selectedStatus by remember { mutableStateOf(ReadingStatus.WANT_TO_READ) }
+    var title by remember(initialBook) { mutableStateOf(initialBook?.title.orEmpty()) }
+    var author by remember(initialBook) { mutableStateOf(initialBook?.author.orEmpty()) }
+    var publisher by remember(initialBook) { mutableStateOf(initialBook?.publisher.orEmpty()) }
+    var isbn by remember(initialBook) { mutableStateOf(initialBook?.isbn.orEmpty()) }
+    var description by remember(initialBook) { mutableStateOf(initialBook?.description.orEmpty()) }
+    var selectedStatus by remember(initialBook) { mutableStateOf(initialBook?.readingStatusEnum ?: ReadingStatus.WANT_TO_READ) }
     var selectedShelfIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isStatusExpanded by remember { mutableStateOf(false) }
     var showAllShelvesSheet by remember { mutableStateOf(false) }

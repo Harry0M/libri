@@ -66,6 +66,7 @@ import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.datamodel.GutendexBook
 import com.theblankstate.libri.datamodel.SubjectWork
 import com.theblankstate.libri.datamodel.bookModel
+import com.theblankstate.libri.util.BookFileUtils
 import com.theblankstate.libri.view.components.AddBookEntrySheet
 import com.theblankstate.libri.view.components.BookCard
 import com.theblankstate.libri.view.components.CreateShelfDialog
@@ -110,18 +111,14 @@ fun HomeScreen(
     }
 
     val launcher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.OpenDocument()
     ) { uri: android.net.Uri? ->
         uri?.let {
-            val mimeType = try { context.contentResolver.getType(it) ?: "" } catch (e: Exception) { "" }
-            val path = it.path?.lowercase() ?: ""
-            val isPdf = mimeType.contains("pdf") || path.endsWith(".pdf")
-            val isEpub = mimeType.contains("epub") || path.endsWith(".epub")
-            if (isPdf || isEpub) {
+            if (BookFileUtils.isSupported(context, it)) {
                 importUri = it
                 showImportDialog = true
             } else {
-                android.widget.Toast.makeText(context, "Please select a PDF or EPUB file.", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, "Please select a PDF, EPUB, TXT, or HTML file.", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -268,7 +265,7 @@ fun HomeScreen(
             },
             onImportFile = {
                 showAddOptions = false
-                launcher.launch("*/*")
+                launcher.launch(BookFileUtils.supportedMimeTypes)
             },
             onSearchOnline = {
                 showAddOptions = false

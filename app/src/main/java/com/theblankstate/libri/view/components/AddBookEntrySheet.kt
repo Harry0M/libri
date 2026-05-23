@@ -100,7 +100,7 @@ fun AddBookEntrySheet(
             AddBookActionRow(
                 icon = Icons.Default.UploadFile,
                 title = "Import file",
-                subtitle = "PDF or EPUB from this device",
+                subtitle = "PDF, EPUB, TXT, or HTML",
                 onClick = onImportFile
             )
             AddBookActionRow(

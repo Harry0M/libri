@@ -1,5 +1,6 @@
 package com.theblankstate.libri.ui.navigation
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -73,10 +74,13 @@ import com.theblankstate.libri.viewModel.ShelvesViewModel
 import com.theblankstate.libri.data.LibraryRepository
 import com.theblankstate.libri.datamodel.BookFormat
 import com.theblankstate.libri.datamodel.GutendexBook
+import com.theblankstate.libri.util.BookFileUtils
 
 @Composable
 fun AppNavHost(
-    viewModel: BookViewModel
+    viewModel: BookViewModel,
+    externalBookUri: Uri? = null,
+    onExternalBookUriConsumed: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val userPreferencesRepository = remember { UserPreferencesRepository(context) }
@@ -146,6 +150,32 @@ fun AppNavHost(
             format = format,
             downloadUrl = downloadUrl
         )
+    }
+
+    LaunchedEffect(externalBookUri, currentRoute) {
+        val uri = externalBookUri ?: return@LaunchedEffect
+        if (currentRoute == null || currentRoute == "splash") return@LaunchedEffect
+
+        val format = BookFileUtils.detectFormat(context, uri)
+        if (format == null) {
+            android.widget.Toast.makeText(
+                context,
+                "This file type is not supported by Libri.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            onExternalBookUriConsumed()
+            return@LaunchedEffect
+        }
+
+        navigateReadableBook(
+            bookId = BookFileUtils.stableLocalId(uri),
+            title = BookFileUtils.titleFromUri(context, uri),
+            author = "",
+            coverUrl = null,
+            format = format,
+            fileUri = uri.toString()
+        )
+        onExternalBookUriConsumed()
     }
 
     Box(
