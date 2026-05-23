@@ -6,42 +6,36 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilledTonalIconButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
+import androidx.compose.material3.carousel.HorizontalCenteredHeroCarousel
+import androidx.compose.material3.carousel.HorizontalMultiBrowseCarousel
+import androidx.compose.material3.carousel.rememberCarouselState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -53,11 +47,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
@@ -68,7 +64,6 @@ import com.theblankstate.libri.datamodel.SubjectWork
 import com.theblankstate.libri.datamodel.bookModel
 import com.theblankstate.libri.util.BookFileUtils
 import com.theblankstate.libri.view.components.AddBookEntrySheet
-import com.theblankstate.libri.view.components.BookCard
 import com.theblankstate.libri.view.components.CreateShelfDialog
 import com.theblankstate.libri.view.components.ExpressiveLoadingIndicator
 import com.theblankstate.libri.viewModel.HomeState
@@ -77,6 +72,11 @@ import com.theblankstate.libri.viewModel.HomeViewModelFactory
 import com.theblankstate.libri.viewModel.LibraryViewModel
 import com.theblankstate.libri.viewModel.ShelvesViewModel
 import java.util.Calendar
+
+private enum class HomeFeedMode {
+    OPEN_LIBRARY,
+    GUTENBERG
+}
 
 @Composable
 fun HomeScreen(
@@ -99,6 +99,7 @@ fun HomeScreen(
     var showImportDialog by remember { mutableStateOf(false) }
     var showCreateShelfDialog by remember { mutableStateOf(false) }
     var importUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var homeFeedMode by remember { mutableStateOf(HomeFeedMode.OPEN_LIBRARY) }
     val libraryViewModel: LibraryViewModel = androidx.lifecycle.viewmodel.compose.viewModel(
         factory = androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.getInstance(
             context.applicationContext as Application
@@ -134,6 +135,8 @@ fun HomeScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             HomeTopBar(
+                selectedMode = homeFeedMode,
+                onModeChange = { homeFeedMode = it },
                 onAddClick = { showAddOptions = true }
             )
         }
@@ -164,11 +167,13 @@ fun HomeScreen(
                         contentPadding = PaddingValues(bottom = 104.dp),
                         verticalArrangement = Arrangement.spacedBy(24.dp)
                     ) {
-                        item {
-                            OpenLibraryRetryBanner(
-                                message = state.retryMessage,
-                                onRetry = viewModel::retry
-                            )
+                        if (homeFeedMode == HomeFeedMode.OPEN_LIBRARY) {
+                            item {
+                                OpenLibraryRetryBanner(
+                                    message = state.retryMessage,
+                                    onRetry = viewModel::retry
+                                )
+                            }
                         }
                         itemsIndexed(
                             state.gutenbergSections,
@@ -190,24 +195,38 @@ fun HomeScreen(
                 }
 
                 is HomeState.Success -> {
-                    val featuredBooks = state.content.flatMap { it.second }.take(3)
-                    val heroMessage = remember(state.content) {
-                        state.content.firstOrNull()?.let { (title, books) ->
-                            when {
-                                title.equals("Continue Reading", ignoreCase = true) ->
-                                    "Continue with ${books.firstOrNull()?.title ?: "your current read"}."
-                                title.startsWith("Because", ignoreCase = true) ->
-                                    "$title. Fresh picks are ready."
-                                title.startsWith("More from", ignoreCase = true) ->
-                                    "$title is ready."
-                                title.contains("Trending", ignoreCase = true) ->
-                                    "Trending picks are ready for you."
-                                books.isNotEmpty() ->
-                                    "Fresh picks from $title are ready."
-                                else -> "Your next chapter is ready."
-                            }
-                        } ?: "Your next chapter is ready."
+                    val continueBooks = remember(state.content) {
+                        state.content.firstOrNull { it.first.equals("Continue Reading", ignoreCase = true) }
+                            ?.second.orEmpty()
                     }
+                    val recommendationBooks = remember(state.content) {
+                        state.content
+                            .filterNot { it.first.equals("Continue Reading", ignoreCase = true) }
+                            .flatMap { it.second }
+                    }
+                    val featuredBooks = remember(continueBooks, recommendationBooks) {
+                        (continueBooks + recommendationBooks)
+                            .distinctBy { it.key ?: it.title }
+                            .take(8)
+                    }
+                    val spotlightLabel = if (continueBooks.isNotEmpty()) "Continue" else "Start"
+                    val heroMessage = remember(continueBooks, recommendationBooks) {
+                        when {
+                            continueBooks.size > 1 ->
+                                "Continue ${continueBooks.first().title.ifBlank { "your current read" }} and keep your shelf moving."
+                            continueBooks.size == 1 ->
+                                "Continue ${continueBooks.first().title.ifBlank { "your current read" }} or start a fresh pick."
+                            recommendationBooks.isNotEmpty() ->
+                                "No current read yet. Pick one from today's recommendations."
+                            else -> "Your next chapter is loading."
+                        }
+                    }
+                    val feedSections = if (homeFeedMode == HomeFeedMode.OPEN_LIBRARY) {
+                        state.content
+                    } else {
+                        emptyList()
+                    }
+                    val gutenbergSections = state.gutenbergSections
                     LazyColumn(
                         contentPadding = PaddingValues(bottom = 104.dp),
                         verticalArrangement = Arrangement.spacedBy(24.dp)
@@ -217,31 +236,60 @@ fun HomeScreen(
                                 greeting = greeting,
                                 userName = userName,
                                 featuredBooks = featuredBooks,
-                                message = heroMessage
+                                message = heroMessage,
+                                spotlightLabel = spotlightLabel,
+                                onBookClick = onBookClick
                             )
                         }
 
-                        item {
-                            HomeActionRail(
-                                title = state.gutenbergTitle,
-                                subtitle = state.gutenbergSubtitle,
-                                onFreeGutenbergBooksClick = onFreeGutenbergBooksClick
-                            )
-                        }
+                        if (homeFeedMode == HomeFeedMode.OPEN_LIBRARY) {
+                            item {
+                                HomeActionRail(
+                                    title = state.gutenbergTitle,
+                                    subtitle = state.gutenbergSubtitle,
+                                    onFreeGutenbergBooksClick = onFreeGutenbergBooksClick
+                                )
+                            }
 
-                        itemsIndexed(
-                            state.content,
-                            key = { index, section -> "${section.first}-$index" }
-                        ) { _, (title, books) ->
-                            if (books.isNotEmpty()) {
-                                HomeSection(
-                                    title = title,
-                                    count = books.size
-                                ) {
-                                    RelatedBookCarousel(
-                                        books = books,
-                                        onBookClick = onBookClick
+                            itemsIndexed(
+                                feedSections,
+                                key = { index, section -> "${section.first}-$index" }
+                            ) { _, (title, books) ->
+                                if (books.isNotEmpty()) {
+                                    HomeSection(
+                                        title = title,
+                                        count = books.size
+                                    ) {
+                                        RelatedBookCarousel(
+                                            books = books,
+                                            onBookClick = onBookClick
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            if (gutenbergSections.isEmpty()) {
+                                item {
+                                    GutenbergLoadingPanel(
+                                        title = state.gutenbergTitle,
+                                        subtitle = state.gutenbergSubtitle
                                     )
+                                }
+                            }
+                            itemsIndexed(
+                                gutenbergSections,
+                                key = { index, section -> "home-gutenberg-${section.first}-$index" }
+                            ) { _, (title, books) ->
+                                if (books.isNotEmpty()) {
+                                    HomeSection(
+                                        title = title,
+                                        count = books.size
+                                    ) {
+                                        GutenbergBookCarousel(
+                                            books = books,
+                                            onBookClick = onGutenbergBookClick
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -348,20 +396,20 @@ fun HomeScreen(
 }
 
 @Composable
-fun HomeTopBar(
+private fun HomeTopBar(
+    selectedMode: HomeFeedMode,
+    onModeChange: (HomeFeedMode) -> Unit,
     onAddClick: () -> Unit = {}
 ) {
     Surface(
         color = MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
         tonalElevation = 0.dp
     ) {
-        Row(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(start = 20.dp, top = 0.dp, end = 16.dp, bottom = 0.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top
+                .padding(start = 20.dp, top = 0.dp, end = 16.dp, bottom = 2.dp)
         ) {
             Column {
                 Text(
@@ -376,7 +424,16 @@ fun HomeTopBar(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            HomeSourceSwitch(
+                selectedMode = selectedMode,
+                onModeChange = onModeChange,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.align(Alignment.TopEnd)
+            ) {
                 FilledTonalIconButton(onClick = onAddClick) {
                     Icon(Icons.Default.Add, contentDescription = "Add book")
                 }
@@ -386,93 +443,380 @@ fun HomeTopBar(
 }
 
 @Composable
-private fun HomeHero(
-    greeting: String,
-    userName: String,
-    featuredBooks: List<bookModel>,
-    message: String
+private fun HomeSourceSwitch(
+    selectedMode: HomeFeedMode,
+    onModeChange: (HomeFeedMode) -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp)
-            .clip(MaterialTheme.shapes.extraLarge)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.primaryContainer,
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                        MaterialTheme.colorScheme.secondaryContainer
-                    )
-                )
-            )
-            .padding(20.dp)
+    Surface(
+        modifier = modifier
+            .width(176.dp)
+            .height(44.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 6.dp,
+        shadowElevation = 8.dp
     ) {
-        Column(
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(end = 104.dp)
+                .fillMaxSize()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "$greeting,",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
+            HomeSourceSwitchItem(
+                selected = selectedMode == HomeFeedMode.OPEN_LIBRARY,
+                label = "Open",
+                icon = { Icon(Icons.Default.Explore, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                onClick = { onModeChange(HomeFeedMode.OPEN_LIBRARY) },
+                modifier = Modifier.weight(1f)
             )
-            Text(
-                text = userName,
-                style = MaterialTheme.typography.headlineLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.78f)
+            HomeSourceSwitchItem(
+                selected = selectedMode == HomeFeedMode.GUTENBERG,
+                label = "Gutenberg",
+                icon = { Icon(Icons.Default.AutoStories, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                onClick = { onModeChange(HomeFeedMode.GUTENBERG) },
+                modifier = Modifier.weight(1f)
             )
         }
-
-        HeroCoverStack(
-            books = featuredBooks,
-            modifier = Modifier.align(Alignment.CenterEnd)
-        )
     }
 }
 
 @Composable
-private fun BoxScope.HeroCoverStack(
-    books: List<bookModel>,
+private fun HomeSourceSwitchItem(
+    selected: Boolean,
+    label: String,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val covers = books.filter { it.coverUrl != null }.take(3)
-    Box(
+    val selectedWeight by animateFloatAsState(
+        targetValue = if (selected) 1.08f else 1f,
+        label = "HomeSourceSwitchWeight"
+    )
+    Surface(
         modifier = modifier
-            .width(112.dp)
-            .height(150.dp)
+            .fillMaxHeight()
+            .graphicsLayer {
+                scaleX = selectedWeight
+                scaleY = selectedWeight
+            }
+            .clip(MaterialTheme.shapes.extraLarge)
+            .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
     ) {
-        if (covers.isEmpty()) {
-            HeroCoverPlaceholder(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(width = 92.dp, height = 132.dp)
-            )
-        } else {
-            covers.forEachIndexed { index, book ->
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(book.coverUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = book.title,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .offset(x = ((index - 1) * 18).dp, y = (index * 4).dp)
-                        .size(width = 78.dp, height = 120.dp)
-                        .clip(MaterialTheme.shapes.medium),
-                    contentScale = ContentScale.Crop
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            icon()
+            if (selected) {
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun HomeHero(
+    greeting: String,
+    userName: String,
+    featuredBooks: List<bookModel>,
+    message: String,
+    spotlightLabel: String,
+    onBookClick: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = 0.dp
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    modifier = Modifier.size(44.dp),
+                    shape = MaterialShapes.Flower.toShape(),
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    tonalElevation = 0.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.AutoStories,
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "$greeting, $userName",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        if (featuredBooks.isNotEmpty()) {
+            HomeSpotlightCarousel(
+                books = featuredBooks,
+                spotlightLabel = spotlightLabel,
+                onBookClick = onBookClick
+            )
+        } else {
+            HomeSpotlightEmptyCard(modifier = Modifier.padding(horizontal = 16.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun HomeSpotlightCarousel(
+    books: List<bookModel>,
+    spotlightLabel: String,
+    onBookClick: (String) -> Unit
+) {
+    val carouselState = rememberCarouselState { books.size }
+
+    HorizontalCenteredHeroCarousel(
+        state = carouselState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(334.dp),
+        maxItemWidth = 318.dp,
+        itemSpacing = 14.dp,
+        minSmallItemWidth = 70.dp,
+        maxSmallItemWidth = 102.dp,
+        contentPadding = PaddingValues(horizontal = 18.dp)
+    ) { index ->
+        val book = books[index]
+        val isFocused = carouselState.currentItem == index
+        val shape = RoundedCornerShape(24.dp)
+
+        HomeSpotlightBookCard(
+            book = book,
+            isFocused = isFocused,
+            spotlightLabel = spotlightLabel,
+            onClick = { book.key?.let(onBookClick) },
+            modifier = Modifier
+                .fillMaxSize()
+                .maskClip(shape),
+            shape = shape
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun HomeSpotlightBookCard(
+    book: bookModel,
+    isFocused: Boolean,
+    spotlightLabel: String,
+    onClick: () -> Unit,
+    shape: androidx.compose.ui.graphics.Shape,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier,
+        shape = shape,
+        colors = CardDefaults.cardColors(
+            containerColor = if (isFocused) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            }
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isFocused) 2.dp else 0.dp)
+    ) {
+        if (isFocused) {
+            SpotlightOpenBookContent(
+                book = book,
+                spotlightLabel = spotlightLabel,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            BookSpineContent(
+                title = book.title,
+                coverUrl = book.coverUrl,
+                yearText = book.first_publish_year?.toString(),
+                useVerticalTitleRail = true,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+    }
+}
+
+@Composable
+private fun SpotlightOpenBookContent(
+    book: bookModel,
+    spotlightLabel: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier.padding(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        ExpressiveBookCover(
+            title = book.title,
+            coverUrl = book.coverUrl,
+            badgeText = null,
+            modifier = Modifier
+                .width(118.dp)
+                .fillMaxHeight()
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    spotlightLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    book.title.ifBlank { "Untitled book" },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    book.author_name?.firstOrNull().orEmpty().ifBlank { "Unknown author" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    listOfNotNull(
+                        book.first_publish_year?.toString(),
+                        book.ebook_access?.replace("_", " ")
+                    ).joinToString(" | ").ifBlank { "Open Library" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            BookSignalPill(
+                text = book.first_publish_year?.toString() ?: "Book",
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun GutenbergLoadingPanel(
+    title: String,
+    subtitle: String
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(28.dp),
+                strokeWidth = 3.dp
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeSpotlightEmptyCard(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(180.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(22.dp),
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                Icons.Default.AutoStories,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                "Your next chapter is loading",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }
@@ -599,7 +943,7 @@ fun HomeSection(
                 )
             }
             Icon(
-                Icons.Default.TrendingUp,
+                Icons.AutoMirrored.Filled.TrendingUp,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.secondary
             )
@@ -613,20 +957,31 @@ fun BookCarousel(
     books: List<SubjectWork>,
     onBookClick: (String) -> Unit
 ) {
-    val listState = rememberLazyListState()
-    LazyRow(
-        state = listState,
-        flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        items(books, key = { it.key ?: it.title.hashCode() }) { book ->
-            BookCard(
+    if (books.isEmpty()) return
+    val carouselState = rememberCarouselState { books.size }
+
+    HomeCarouselFrame { preferredItemWidth, smallItemWidth, itemSpacing, horizontalPadding ->
+        HorizontalMultiBrowseCarousel(
+            state = carouselState,
+            preferredItemWidth = preferredItemWidth,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(310.dp),
+            itemSpacing = itemSpacing,
+            minSmallItemWidth = smallItemWidth,
+            maxSmallItemWidth = smallItemWidth,
+            contentPadding = PaddingValues(horizontal = horizontalPadding)
+        ) { index ->
+            val book = books[index]
+            ExpressiveHomeBookCard(
                 title = book.title.orEmpty(),
                 author = book.authors?.firstOrNull()?.name.orEmpty(),
                 coverUrl = book.coverUrl,
                 badgeText = book.firstPublishYear?.toString(),
-                onClick = { book.key?.let { onBookClick(it) } }
+                onClick = { book.key?.let { onBookClick(it) } },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .maskClip(RoundedCornerShape(24.dp))
             )
         }
     }
@@ -637,23 +992,31 @@ fun RelatedBookCarousel(
     books: List<bookModel>,
     onBookClick: (String) -> Unit
 ) {
-    val listState = rememberLazyListState()
-    LazyRow(
-        state = listState,
-        flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        itemsIndexed(
-            books,
-            key = { index, book -> "${book.key ?: book.title}-$index" }
-        ) { _, book ->
-            BookCard(
+    if (books.isEmpty()) return
+    val carouselState = rememberCarouselState { books.size }
+
+    HomeCarouselFrame { preferredItemWidth, smallItemWidth, itemSpacing, horizontalPadding ->
+        HorizontalMultiBrowseCarousel(
+            state = carouselState,
+            preferredItemWidth = preferredItemWidth,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(310.dp),
+            itemSpacing = itemSpacing,
+            minSmallItemWidth = smallItemWidth,
+            maxSmallItemWidth = smallItemWidth,
+            contentPadding = PaddingValues(horizontal = horizontalPadding)
+        ) { index ->
+            val book = books[index]
+            ExpressiveHomeBookCard(
                 title = book.title,
                 author = book.author_name?.firstOrNull().orEmpty(),
                 coverUrl = book.coverUrl,
                 badgeText = book.first_publish_year?.toString(),
-                onClick = { book.key?.let { onBookClick(it) } }
+                onClick = { book.key?.let { onBookClick(it) } },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .maskClip(RoundedCornerShape(24.dp))
             )
         }
     }
@@ -664,28 +1027,331 @@ fun GutenbergBookCarousel(
     books: List<GutendexBook>,
     onBookClick: (GutendexBook) -> Unit
 ) {
-    val listState = rememberLazyListState()
-    LazyRow(
-        state = listState,
-        flingBehavior = rememberSnapFlingBehavior(lazyListState = listState),
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        itemsIndexed(
-            books,
-            key = { index, book -> "gutenberg-${book.id}-$index" }
-        ) { _, book ->
-            BookCard(
+    if (books.isEmpty()) return
+    val carouselState = rememberCarouselState { books.size }
+
+    HomeCarouselFrame { preferredItemWidth, smallItemWidth, itemSpacing, horizontalPadding ->
+        HorizontalMultiBrowseCarousel(
+            state = carouselState,
+            preferredItemWidth = preferredItemWidth,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(310.dp),
+            itemSpacing = itemSpacing,
+            minSmallItemWidth = smallItemWidth,
+            maxSmallItemWidth = smallItemWidth,
+            contentPadding = PaddingValues(horizontal = horizontalPadding)
+        ) { index ->
+            val book = books[index]
+            ExpressiveHomeBookCard(
                 title = book.title,
                 author = book.authorNames,
                 coverUrl = book.coverUrl,
                 badgeText = "Free",
-                onClick = { onBookClick(book) }
+                onClick = { onBookClick(book) },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .maskClip(RoundedCornerShape(24.dp))
             )
         }
     }
 }
 
+@Composable
+private fun HomeCarouselFrame(
+    content: @Composable (Dp, Dp, Dp, Dp) -> Unit
+) {
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val horizontalPadding = 12.dp
+        val itemSpacing = 10.dp
+        val spineWidth = 68.dp
+        val preferredItemWidth =
+            ((maxWidth - horizontalPadding - horizontalPadding - itemSpacing - itemSpacing - spineWidth) / 2f)
+                .coerceAtLeast(112.dp)
+
+        content(preferredItemWidth, spineWidth, itemSpacing, horizontalPadding)
+    }
+}
+
+@Composable
+private fun ExpressiveHomeBookCard(
+    title: String,
+    author: String,
+    coverUrl: String?,
+    badgeText: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            if (maxWidth < 108.dp) {
+                BookSpineContent(
+                    title = title,
+                    coverUrl = coverUrl,
+                    yearText = badgeText,
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    ExpressiveBookCover(
+                        title = title,
+                        coverUrl = coverUrl,
+                        badgeText = badgeText,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(204.dp)
+                    )
+                    Column(
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = title.ifBlank { "Unknown Title" },
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = author.ifBlank { "Unknown Author" },
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookSpineContent(
+    title: String,
+    coverUrl: String?,
+    yearText: String?,
+    useVerticalTitleRail: Boolean = false,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.secondaryContainer,
+                            MaterialTheme.colorScheme.tertiaryContainer
+                        )
+                    )
+                )
+        )
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(coverUrl)
+                .crossfade(true)
+                .build(),
+            contentDescription = title,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            Color.Transparent,
+                            Color.Black.copy(alpha = 0.18f),
+                            Color.Black.copy(alpha = 0.38f)
+                        )
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .width(7.dp)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.38f))
+        )
+        if (useVerticalTitleRail) {
+            VerticalSpineTitleRail(
+                title = title,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(88.dp)
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f))
+            ) {
+                Text(
+                    text = title.ifBlank { "Untitled" },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 8.dp)
+                )
+            }
+        }
+        if (!yearText.isNullOrBlank()) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 7.dp, vertical = 8.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+                tonalElevation = 0.dp
+            ) {
+                Text(
+                    text = yearText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VerticalSpineTitleRail(
+    title: String,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .width(24.dp)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.96f),
+                        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.96f)
+                    )
+                )
+            )
+    ) {
+        Text(
+            text = title.ifBlank { "Untitled" },
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .width(220.dp)
+                .graphicsLayer { rotationZ = -90f }
+                .padding(horizontal = 10.dp)
+        )
+        Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(1.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.34f))
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ExpressiveBookCover(
+    title: String,
+    coverUrl: String?,
+    badgeText: String?,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+    ) {
+        HeroCoverPlaceholder(modifier = Modifier.fillMaxSize())
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(coverUrl)
+                .crossfade(true)
+                .build(),
+            contentDescription = title,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        )
+        if (!badgeText.isNullOrBlank()) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+                shape = MaterialShapes.Cookie6Sided.toShape(),
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                tonalElevation = 0.dp
+            ) {
+                Text(
+                    badgeText,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BookSignalPill(
+    text: String,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh
+) {
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = containerColor,
+        tonalElevation = 0.dp
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+        )
+    }
+}
 @Composable
 private fun OpenLibraryRetryBanner(
     message: String,

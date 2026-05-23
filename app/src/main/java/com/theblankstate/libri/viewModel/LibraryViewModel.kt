@@ -29,6 +29,11 @@ import com.theblankstate.libri.datamodel.BookSource
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
 import com.theblankstate.libri.datamodel.BookFormat
+import com.theblankstate.libri.recommendation.RecommendationEngine
+import com.theblankstate.libri.recommendation.RecommendationEvent
+import com.theblankstate.libri.recommendation.RecommendationEventType
+import com.theblankstate.libri.recommendation.RecommendationItemSource
+import com.theblankstate.libri.recommendation.RecommendationStore
 import com.theblankstate.libri.util.IsbnUtils
 import com.theblankstate.libri.util.BookIdentity
 import com.google.gson.JsonObject
@@ -46,6 +51,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 sealed class LibraryUiState {
@@ -67,6 +73,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     private val shelvesRepository = ShelvesRepository()
     private val apiRepository = repository
     private val downloadsRepository = DownloadsRepository(application)
+    private val recommendationStore = RecommendationStore(application)
     private val context = application.applicationContext
     private val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     
@@ -370,6 +377,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
             val result = libraryRepository.addBookToLibrary(uid, book)
             result.fold(
                 onSuccess = { 
+                    recordLibraryEvent(RecommendationEventType.LIBRARY_ADD, book)
                     onSuccess()
                     // Attempt to fetch ISBN if missing and openLibraryId exists
                     if (book.isbn.isNullOrBlank() && !book.openLibraryId.isNullOrBlank()) {
@@ -395,6 +403,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                     shelfIds.forEach { shelfId ->
                         shelvesRepository.addBookToShelf(uid, book.id, shelfId)
                     }
+                    recordLibraryEvent(RecommendationEventType.LIBRARY_ADD, book)
                     onSuccess()
                     if (book.isbn.isNullOrBlank() && !book.openLibraryId.isNullOrBlank()) {
                         fetchAndUpdateIsbn(uid, book.id, book.openLibraryId)
@@ -446,23 +455,46 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
     
     fun updateReadingStatus(uid: String, bookId: String, status: ReadingStatus) {
         viewModelScope.launch {
-            libraryRepository.updateReadingStatus(uid, bookId, status)
-            // If status is IN_PROGRESS, ensure dateStarted is set
-            if (status == ReadingStatus.IN_PROGRESS) {
-                // Repository handles this logic, but we can double check or refresh
+            val result = libraryRepository.updateReadingStatus(uid, bookId, status)
+            if (result.isSuccess) {
+                val book = allBooks.find { it.id == bookId } ?: _selectedBook.value?.takeIf { it.id == bookId }
+                val eventType = when (status) {
+                    ReadingStatus.IN_PROGRESS -> RecommendationEventType.READ_START
+                    ReadingStatus.FINISHED -> RecommendationEventType.READ_FINISH
+                    else -> null
+                }
+                if (book != null && eventType != null) {
+                    recordLibraryEvent(eventType, book)
+                }
             }
         }
     }
     
     fun updateReadingProgress(uid: String, bookId: String, currentPage: Int, totalPages: Int) {
         viewModelScope.launch {
-            libraryRepository.updateReadingProgress(uid, bookId, currentPage, totalPages)
+            val result = libraryRepository.updateReadingProgress(uid, bookId, currentPage, totalPages)
+            if (result.isSuccess) {
+                val book = allBooks.find { it.id == bookId } ?: _selectedBook.value?.takeIf { it.id == bookId }
+                if (book != null) {
+                    val percent = if (totalPages > 0) (currentPage.toDouble() / totalPages.toDouble()) * 100.0 else 0.0
+                    recordLibraryEvent(RecommendationEventType.READ_PROGRESS, book, percent)
+                    if (percent >= 99.0) {
+                        recordLibraryEvent(RecommendationEventType.READ_FINISH, book, percent)
+                    }
+                }
+            }
         }
     }
     
     fun updateRating(uid: String, bookId: String, rating: Float) {
         viewModelScope.launch {
-            libraryRepository.updateRating(uid, bookId, rating)
+            val result = libraryRepository.updateRating(uid, bookId, rating)
+            if (result.isSuccess) {
+                val book = allBooks.find { it.id == bookId } ?: _selectedBook.value?.takeIf { it.id == bookId }
+                if (book != null) {
+                    recordLibraryEvent(RecommendationEventType.RATING, book, rating.toDouble())
+                }
+            }
         }
     }
     
@@ -476,6 +508,32 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             libraryRepository.toggleFavorite(uid, bookId)
         }
+    }
+
+    private suspend fun recordLibraryEvent(
+        type: RecommendationEventType,
+        book: LibraryBook,
+        value: Double? = null
+    ) {
+        val itemId = book.openLibraryId
+            ?.takeIf { it.isNotBlank() }
+            ?: book.gutenbergId?.let { "gutenberg:$it" }
+            ?: book.id
+        recommendationStore.recordEvent(
+            RecommendationEvent(
+                eventId = UUID.randomUUID().toString(),
+                type = type,
+                itemId = RecommendationEngine.normalizeItemId(itemId),
+                source = when {
+                    book.gutenbergId != null -> RecommendationItemSource.GUTENBERG
+                    !book.openLibraryId.isNullOrBlank() || !book.internetArchiveId.isNullOrBlank() -> RecommendationItemSource.OPEN_LIBRARY
+                    else -> RecommendationItemSource.LOCAL_LIBRARY
+                },
+                title = book.title,
+                authors = listOf(book.author).filter { it.isNotBlank() },
+                value = value
+            )
+        )
     }
     
     fun selectBook(book: LibraryBook) {
@@ -933,6 +991,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                             gutenbergId = gId
                         )
                         downloadsRepository.saveBook(downloadedBook)
+                        recordLibraryEvent(RecommendationEventType.DOWNLOAD, updatedBook)
 
                         if (_selectedBook.value?.id == book.id) {
                             _selectedBook.value = updatedBook
@@ -1038,6 +1097,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                         format = archiveFile.format
                     )
                     downloadsRepository.saveBook(downloadedBook)
+                    recordLibraryEvent(RecommendationEventType.DOWNLOAD, updatedBook)
                     
                     // Update selected book if it's the same
                     if (_selectedBook.value?.id == book.id) {
@@ -1131,6 +1191,7 @@ class LibraryViewModel(application: Application) : AndroidViewModel(application)
                             source = BookSource.ARCHIVE_ORG
                         )
                     )
+                    recordLibraryEvent(RecommendationEventType.DOWNLOAD, updatedBook)
 
                     if (_selectedBook.value?.id == book.id) {
                         _selectedBook.value = updatedBook

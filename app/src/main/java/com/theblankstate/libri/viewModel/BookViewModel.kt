@@ -13,6 +13,8 @@ import com.theblankstate.libri.datamodel.ArchiveDownloadOption
 import com.theblankstate.libri.datamodel.SortOption
 import com.theblankstate.libri.datamodel.WorkDetailModel
 import com.theblankstate.libri.datamodel.bookModel
+import com.theblankstate.libri.recommendation.RecommendationEngine
+import com.theblankstate.libri.recommendation.RecommendationStore
 import com.theblankstate.libri.states.state
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +30,8 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
     private val bookRepository = repository
     private val internetArchiveRepository = InternetArchiveRepository()
     private val userPreferencesRepository = UserPreferencesRepository(application)
+    private val recommendationStore = RecommendationStore(application)
+    private val recommendationEngine = RecommendationEngine()
 
     private val _bookState = MutableStateFlow<state>(state.loading)
     val bookState: StateFlow<state> = _bookState
@@ -94,6 +98,9 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addSearchHistoryItem(query: String) {
         if (query.isBlank()) return
+        viewModelScope.launch {
+            recommendationStore.recordSearch(query)
+        }
         val currentHistory = _searchHistory.value.toMutableList()
         currentHistory.remove(query)
         currentHistory.add(0, query)
@@ -161,9 +168,13 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                     sort = "trending",
                     limit = 12
                 )
-                val books = (authorPicks + genrePicks + trendingPicks)
+                val rawBooks = (authorPicks + genrePicks + trendingPicks)
                     .filter { it.title.isNotBlank() }
                     .distinctBy { it.key ?: it.title }
+                recommendationStore.upsertBooks(rawBooks)
+                val signals = recommendationStore.loadSignals(userPreferencesRepository)
+                val books = rawBooks
+                    .sortedByDescending { recommendationEngine.score(it, "Search recommendations", signals) }
                     .take(12)
 
                 val topics = RecommendationSeeds.displayTopicsFromGenres(selectedGenres, limit = 10)
@@ -223,6 +234,8 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                     offset = 0
                 )
                 cachedBooks = books
+                recommendationStore.upsertBooks(books)
+                query?.let { recommendationStore.recordSearch(it) }
                 currentOffset = books.size
                 canLoadMore = books.size >= pageLimit
                 _bookState.value = state.success(books)
@@ -388,7 +401,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
     fun selectBook(book: bookModel) {
         // Clear stale state from previous book IMMEDIATELY so the UI never flashes old data
         clearBookDetailState()
-        _selectedBook.value = book
+        updateSelectedBook(book)
         fetchSimilarBooks(book)
         val workId = normalizeKey(book.key) ?: return
         fetchWorkDetails(workId)
@@ -412,6 +425,13 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
         lastLoadedCacheKey = null
     }
 
+    private fun updateSelectedBook(book: bookModel) {
+        _selectedBook.value = book
+        viewModelScope.launch {
+            recommendationStore.recordBookOpen(book)
+        }
+    }
+
     fun setSelectedBookById(bookId: String) {
         // Clear stale state from previous book IMMEDIATELY
         clearBookDetailState()
@@ -421,7 +441,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                 val edition = bookRepository.getEditionDetails(editionId)
                 edition?.let { ed ->
                     val book = ed.toBookModel()
-                    _selectedBook.value = book
+                    updateSelectedBook(book)
                     _similarBooks.value = emptyList()
                     
                     val workKey = ed.works?.firstOrNull()?.key
@@ -445,7 +465,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 if (bookToSelect != null) {
-                    _selectedBook.value = bookToSelect
+                    updateSelectedBook(bookToSelect)
                     fetchSimilarBooks(bookToSelect)
                     fetchWorkDetails(bookToSelect.key)
                 } else {
@@ -458,7 +478,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                     } catch (e: Exception) { null }
 
                     if (searchResult != null) {
-                        _selectedBook.value = searchResult
+                        updateSelectedBook(searchResult)
                         fetchWorkDetails(searchResult.key)
                         fetchSimilarBooks(searchResult)
                     } else {
@@ -472,7 +492,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                                 cover_i = workDetails.covers?.firstOrNull(),
                                 subject = workDetails.subjects
                             )
-                            _selectedBook.value = newBook
+                            updateSelectedBook(newBook)
                             _workDetail.value = workDetails
                             
                             // Fetch other details
@@ -656,7 +676,7 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                 val preferredAuthor = book.author_name?.firstOrNull()
                 val preferredGenre = book.subject?.firstOrNull()
                 val searchQuery = if (preferredAuthor == null && preferredGenre == null) book.title else null
-                val similar = bookRepository.getbooks(
+                val rawSimilar = bookRepository.getbooks(
                     query = searchQuery,
                     author = preferredAuthor,
                     subject = preferredGenre,
@@ -665,6 +685,10 @@ class BookViewModel(application: Application) : AndroidViewModel(application) {
                     )?.twoLetter
                 )
                     .filter { normalizeKey(it.key) != normalizeKey(book.key) }
+                recommendationStore.upsertBooks(rawSimilar)
+                val signals = recommendationStore.loadSignals(userPreferencesRepository)
+                val similar = rawSimilar
+                    .sortedByDescending { recommendationEngine.score(it, "Similar books", signals) }
                     .take(12)
                 _similarBooks.value = similar
             } catch (e: Exception) {

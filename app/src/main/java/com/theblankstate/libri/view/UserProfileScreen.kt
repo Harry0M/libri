@@ -17,8 +17,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.theblankstate.libri.data.UserPreferencesRepository
+import com.theblankstate.libri.recommendation.RecommendationStore
+import com.theblankstate.libri.recommendation.RecommendationSyncRepository
 import com.theblankstate.libri.view.components.LibriTopAppBar
 import com.theblankstate.libri.viewModel.OpenLibraryViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -32,6 +35,9 @@ fun UserProfileScreen(
 ) {
     val context = LocalContext.current
     val userPreferencesRepository = remember { UserPreferencesRepository(context) }
+    val recommendationStore = remember { RecommendationStore(context.applicationContext) }
+    val recommendationSyncRepository = remember { RecommendationSyncRepository(context.applicationContext) }
+    val coroutineScope = rememberCoroutineScope()
     val googleUser = remember { userPreferencesRepository.getGoogleUser() }
     val userEmail = googleUser.first.orEmpty()
     val userName = googleUser.second?.takeIf { it.isNotBlank() }
@@ -42,6 +48,10 @@ fun UserProfileScreen(
     
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showDisconnectOLDialog by remember { mutableStateOf(false) }
+    var showClearRecommendationsDialog by remember { mutableStateOf(false) }
+    var recommendationSyncEnabled by remember {
+        mutableStateOf(userPreferencesRepository.isRecommendationSyncEnabled())
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -136,6 +146,51 @@ fun UserProfileScreen(
                         )
                     },
                     modifier = Modifier.clickable { onEditPreferences() }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                ListItem(
+                    headlineContent = { Text("Recommendation Sync") },
+                    supportingContent = {
+                        Text(
+                            if (recommendationSyncEnabled) {
+                                "Save compact recommendation snapshots to your account"
+                            } else {
+                                "Recommendations stay on this device"
+                            }
+                        )
+                    },
+                    leadingContent = {
+                        Icon(
+                            Icons.Outlined.Sync,
+                            contentDescription = null
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = recommendationSyncEnabled,
+                            onCheckedChange = { enabled ->
+                                recommendationSyncEnabled = enabled
+                                userPreferencesRepository.setRecommendationSyncEnabled(enabled)
+                            }
+                        )
+                    }
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+
+                ListItem(
+                    headlineContent = { Text("Delete Recommendation Data") },
+                    supportingContent = { Text("Clear local cache and synced recommendation data") },
+                    leadingContent = {
+                        Icon(
+                            Icons.Outlined.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                    },
+                    modifier = Modifier.clickable { showClearRecommendationsDialog = true }
                 )
             }
 
@@ -414,6 +469,40 @@ fun UserProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDisconnectOLDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showClearRecommendationsDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearRecommendationsDialog = false },
+            title = { Text("Delete recommendation data?") },
+            text = { Text("This clears local recommendation events, cached snapshots, and synced recommendation data for this account.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearRecommendationsDialog = false
+                        coroutineScope.launch {
+                            recommendationStore.clearAll()
+                            recommendationSyncRepository.clearRemoteRecommendationData()
+                            android.widget.Toast.makeText(
+                                context,
+                                "Recommendation data deleted",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearRecommendationsDialog = false }) {
                     Text("Cancel")
                 }
             }

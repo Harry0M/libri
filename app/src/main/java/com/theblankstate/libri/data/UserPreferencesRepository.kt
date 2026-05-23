@@ -42,6 +42,7 @@ class UserPreferencesRepository(context: Context) {
         private const val KEY_GOOGLE_EMAIL = "google_email"
         private const val KEY_GOOGLE_NAME = "google_name"
         private const val KEY_GOOGLE_UID = "google_uid"
+        private const val KEY_RECOMMENDATION_SYNC_ENABLED = "recommendation_sync_enabled"
         // Open Library session keys
         private const val KEY_OL_SESSION = "ol_session"
         private const val KEY_OL_USERNAME = "ol_username"
@@ -145,6 +146,16 @@ class UserPreferencesRepository(context: Context) {
         val json = sharedPreferences.getString(KEY_RECENT_BOOKS, null) ?: return emptyList()
         val type = object : TypeToken<List<String>>() {}.type
         return gson.fromJson(json, type)
+    }
+
+    fun setRecommendationSyncEnabled(enabled: Boolean) {
+        sharedPreferences.edit()
+            .putBoolean(KEY_RECOMMENDATION_SYNC_ENABLED, enabled)
+            .apply()
+    }
+
+    fun isRecommendationSyncEnabled(): Boolean {
+        return sharedPreferences.getBoolean(KEY_RECOMMENDATION_SYNC_ENABLED, true)
     }
 
     // Open Library Session Management (encrypted storage)

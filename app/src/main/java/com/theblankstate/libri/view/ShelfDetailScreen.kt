@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,6 +15,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +51,11 @@ import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
 import kotlin.math.roundToInt
 
+private enum class ShelfBooksViewMode {
+    Grid,
+    Slider
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ShelfDetailScreen(
@@ -58,6 +67,7 @@ fun ShelfDetailScreen(
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
     var bookPendingRemoval by remember { mutableStateOf<LibraryBook?>(null) }
+    var booksViewMode by remember { mutableStateOf(ShelfBooksViewMode.Grid) }
     val uiState by viewModel.shelfDetailUiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -127,10 +137,12 @@ fun ShelfDetailScreen(
                     if (state.books.isEmpty()) {
                         EmptyShelfState(modifier = Modifier.fillMaxSize())
                     } else {
-                        ShelfBooksVerticalSlider(
+                        ShelfBooksContent(
                             shelfName = state.shelf.name,
                             shelfDescription = state.shelf.description,
                             books = state.books,
+                            selectedMode = booksViewMode,
+                            onModeChange = { booksViewMode = it },
                             onBookClick = { book -> onBookClick(book.id) },
                             onRemoveBookClick = { book -> bookPendingRemoval = book },
                             modifier = Modifier.fillMaxSize()
@@ -249,6 +261,184 @@ private fun EmptyShelfState(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun ShelfBooksContent(
+    shelfName: String,
+    shelfDescription: String,
+    books: List<LibraryBook>,
+    selectedMode: ShelfBooksViewMode,
+    onModeChange: (ShelfBooksViewMode) -> Unit,
+    onBookClick: (LibraryBook) -> Unit,
+    onRemoveBookClick: (LibraryBook) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier) {
+        ShelfBooksViewModeSelector(
+            selectedMode = selectedMode,
+            onModeChange = onModeChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+        )
+
+        when (selectedMode) {
+            ShelfBooksViewMode.Grid -> {
+                ShelfBooksGrid(
+                    books = books,
+                    onBookClick = onBookClick,
+                    onRemoveBookClick = onRemoveBookClick,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            ShelfBooksViewMode.Slider -> {
+                ShelfBooksVerticalSlider(
+                    shelfName = shelfName,
+                    shelfDescription = shelfDescription,
+                    books = books,
+                    onBookClick = onBookClick,
+                    onRemoveBookClick = onRemoveBookClick,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShelfBooksViewModeSelector(
+    selectedMode: ShelfBooksViewMode,
+    onModeChange: (ShelfBooksViewMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "View",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        FilterChip(
+            selected = selectedMode == ShelfBooksViewMode.Grid,
+            onClick = { onModeChange(ShelfBooksViewMode.Grid) },
+            label = { Text("Grid") }
+        )
+        FilterChip(
+            selected = selectedMode == ShelfBooksViewMode.Slider,
+            onClick = { onModeChange(ShelfBooksViewMode.Slider) },
+            label = { Text("Slider") }
+        )
+    }
+}
+
+@Composable
+private fun ShelfBooksGrid(
+    books: List<LibraryBook>,
+    onBookClick: (LibraryBook) -> Unit,
+    onRemoveBookClick: (LibraryBook) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        items(books, key = { it.id }) { book ->
+            ShelfGridBookCard(
+                book = book,
+                onClick = { onBookClick(book) },
+                onRemoveClick = { onRemoveBookClick(book) }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ShelfGridBookCard(
+    book: LibraryBook,
+    onClick: () -> Unit,
+    onRemoveClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(0.64f),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (book.coverUrl != null) {
+                AsyncImage(
+                    model = book.coverUrl,
+                    contentDescription = book.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.MenuBook,
+                        contentDescription = null,
+                        modifier = Modifier.size(34.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f)
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onRemoveClick,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(4.dp)
+                    .background(
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                        shape = MaterialTheme.shapes.extraLarge
+                    )
+                    .size(32.dp)
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Remove from shelf",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                tonalElevation = 0.dp
+            ) {
+                Text(
+                    book.title.ifBlank { "Untitled book" },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp)
+                )
+            }
+        }
     }
 }
 

@@ -15,6 +15,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
@@ -74,7 +75,9 @@ import com.theblankstate.libri.viewModel.ShelvesViewModel
 import com.theblankstate.libri.data.LibraryRepository
 import com.theblankstate.libri.datamodel.BookFormat
 import com.theblankstate.libri.datamodel.GutendexBook
+import com.theblankstate.libri.recommendation.RecommendationStore
 import com.theblankstate.libri.util.BookFileUtils
+import kotlinx.coroutines.launch
 
 @Composable
 fun AppNavHost(
@@ -84,6 +87,8 @@ fun AppNavHost(
 ) {
     val context = LocalContext.current
     val userPreferencesRepository = remember { UserPreferencesRepository(context) }
+    val recommendationStore = remember { RecommendationStore(context.applicationContext) }
+    val recommendationScope = rememberCoroutineScope()
 
     
     // Determine start destination based on Google login and onboarding status
@@ -142,6 +147,9 @@ fun AppNavHost(
     }
     fun navigateGutendexBook(book: GutendexBook) {
         val (downloadUrl, format) = book.getBestDownloadFormat() ?: return
+        recommendationScope.launch {
+            recommendationStore.recordGutenbergOpen(book)
+        }
         navigateReadableBook(
             bookId = "gutenberg_${book.id}",
             title = book.title,
@@ -819,6 +827,7 @@ fun AppNavHost(
                 
                 // Add to recent books
                 userPreferencesRepository.addRecentBook(fullKey)
+                recommendationStore.recordBookOpen(fullKey)
             }
             
             BookDetailScreen(
