@@ -23,11 +23,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
-import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -243,14 +241,6 @@ fun HomeScreen(
                         }
 
                         if (homeFeedMode == HomeFeedMode.OPEN_LIBRARY) {
-                            item {
-                                HomeActionRail(
-                                    title = state.gutenbergTitle,
-                                    subtitle = state.gutenbergSubtitle,
-                                    onFreeGutenbergBooksClick = onFreeGutenbergBooksClick
-                                )
-                            }
-
                             itemsIndexed(
                                 feedSections,
                                 key = { index, section -> "${section.first}-$index" }
@@ -402,28 +392,15 @@ private fun HomeTopBar(
     onAddClick: () -> Unit = {}
 ) {
     Surface(
-        color = MaterialTheme.colorScheme.background.copy(alpha = 0.96f),
+        color = Color.Transparent,
         tonalElevation = 0.dp
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(start = 20.dp, top = 0.dp, end = 16.dp, bottom = 2.dp)
+                .padding(start = 16.dp, top = 0.dp, end = 16.dp, bottom = 2.dp)
         ) {
-            Column {
-                Text(
-                    text = "Libri",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = "Read, collect, continue",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
             HomeSourceSwitch(
                 selectedMode = selectedMode,
                 onModeChange = onModeChange,
@@ -450,7 +427,7 @@ private fun HomeSourceSwitch(
 ) {
     Surface(
         modifier = modifier
-            .width(176.dp)
+            .width(224.dp)
             .height(44.dp),
         shape = MaterialTheme.shapes.extraLarge,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -466,15 +443,13 @@ private fun HomeSourceSwitch(
         ) {
             HomeSourceSwitchItem(
                 selected = selectedMode == HomeFeedMode.OPEN_LIBRARY,
-                label = "Open",
-                icon = { Icon(Icons.Default.Explore, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                label = "Open Library",
                 onClick = { onModeChange(HomeFeedMode.OPEN_LIBRARY) },
                 modifier = Modifier.weight(1f)
             )
             HomeSourceSwitchItem(
                 selected = selectedMode == HomeFeedMode.GUTENBERG,
                 label = "Gutenberg",
-                icon = { Icon(Icons.Default.AutoStories, contentDescription = null, modifier = Modifier.size(18.dp)) },
                 onClick = { onModeChange(HomeFeedMode.GUTENBERG) },
                 modifier = Modifier.weight(1f)
             )
@@ -486,7 +461,6 @@ private fun HomeSourceSwitch(
 private fun HomeSourceSwitchItem(
     selected: Boolean,
     label: String,
-    icon: @Composable () -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -511,18 +485,18 @@ private fun HomeSourceSwitchItem(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            icon()
-            if (selected) {
-                Spacer(modifier = Modifier.width(5.dp))
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -839,113 +813,27 @@ private fun HeroCoverPlaceholder(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun HomeActionRail(
-    title: String,
-    subtitle: String,
-    onFreeGutenbergBooksClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        HomeActionTile(
-            title = title,
-            subtitle = subtitle,
-            icon = {
-                Icon(Icons.Default.Explore, contentDescription = null)
-            },
-            color = MaterialTheme.colorScheme.primaryContainer,
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onFreeGutenbergBooksClick
-        )
-    }
-}
-
-@Composable
-private fun HomeActionTile(
-    title: String,
-    subtitle: String,
-    icon: @Composable () -> Unit,
-    color: Color,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    Surface(
-        modifier = modifier
-            .height(96.dp)
-            .clickable(onClick = onClick),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(MaterialTheme.shapes.medium)
-                    .background(color),
-                contentAlignment = Alignment.Center
-            ) {
-                icon()
-            }
-            Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun HomeSection(
     title: String,
     count: Int,
     content: @Composable () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
+        Surface(
             modifier = Modifier
-                .fillMaxWidth()
                 .padding(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            shape = MaterialTheme.shapes.extraLarge,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 0.dp
         ) {
-            Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "$count curated picks",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Icon(
-                Icons.AutoMirrored.Filled.TrendingUp,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.secondary
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
             )
         }
         content()

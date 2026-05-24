@@ -11,7 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,6 +30,7 @@ import coil.request.ImageRequest
 import com.theblankstate.libri.data.LibraryRepository
 import com.theblankstate.libri.data.UserPreferencesRepository
 import com.theblankstate.libri.datamodel.BookFormat
+import com.theblankstate.libri.datamodel.DownloadedBook
 import com.theblankstate.libri.datamodel.GutendexBook
 import com.theblankstate.libri.datamodel.LibraryBook
 import com.theblankstate.libri.datamodel.ReadingStatus
@@ -135,6 +136,36 @@ fun GutenbergBookDetailScreen(
     val isDownloading = downloadingBookIds.contains(currentBookId)
     val currentProgress = downloadProgress[currentBookId] ?: 0f
     val isDownloaded = viewModel.isBookDownloaded(currentBookId)
+    val saveDownloadedToLibrary: (DownloadedBook) -> Unit = { downloaded ->
+        if (uid != null && book != null) {
+            scope.launch {
+                val libraryId = "gutenberg_${book.id}"
+                val existing = libraryRepository.getBook(uid, libraryId)
+                val base = existing ?: LibraryBook(
+                    id = libraryId,
+                    title = book.title,
+                    author = book.authorNames,
+                    coverUrl = book.coverUrl,
+                    description = book.subjects?.joinToString(", "),
+                    ebookAccess = "public",
+                    gutenbergId = book.id,
+                    status = ReadingStatus.WANT_TO_READ.name
+                )
+                val localReference = downloaded.fileUri ?: downloaded.filePath
+                val updated = base.copy(
+                    localFilePath = localReference,
+                    localFileFormat = downloaded.format,
+                    coverUrl = base.coverUrl ?: book.coverUrl,
+                    title = base.title.ifBlank { book.title },
+                    author = base.author.ifBlank { book.authorNames }
+                )
+                libraryRepository.addBookToLibrary(uid, updated)
+                if (!isInLibrary) {
+                    isInLibrary = true
+                }
+            }
+        }
+    }
     
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -296,6 +327,22 @@ fun GutenbergBookDetailScreen(
                                             )
                                         }
                                     }
+
+                                    if (isDownloading) {
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Text(
+                                            text = "Downloading ${(currentProgress * 100).toInt()}%",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        LinearProgressIndicator(
+                                            progress = { currentProgress.coerceIn(0f, 1f) },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.16f)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -315,7 +362,7 @@ fun GutenbergBookDetailScreen(
                                     },
                                     modifier = Modifier.weight(1f)
                                 ) {
-                                    Icon(Icons.Default.MenuBook, contentDescription = null)
+                                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("Read Now")
                                 }
@@ -337,36 +384,7 @@ fun GutenbergBookDetailScreen(
                                     onClick = { 
                                         viewModel.downloadBook(
                                             book = book,
-                                            onSuccess = { downloaded ->
-                                                if (uid != null) {
-                                                    scope.launch {
-                                                        val libraryId = "gutenberg_${book.id}"
-                                                        val existing = libraryRepository.getBook(uid, libraryId)
-                                                        val base = existing ?: LibraryBook(
-                                                            id = libraryId,
-                                                            title = book.title,
-                                                            author = book.authorNames,
-                                                            coverUrl = book.coverUrl,
-                                                            description = book.subjects?.joinToString(", "),
-                                                            ebookAccess = "public",
-                                                            gutenbergId = book.id,
-                                                            status = ReadingStatus.WANT_TO_READ.name
-                                                        )
-                                                        val localReference = downloaded.fileUri ?: downloaded.filePath
-                                                        val updated = base.copy(
-                                                            localFilePath = localReference,
-                                                            localFileFormat = downloaded.format,
-                                                            coverUrl = base.coverUrl ?: book.coverUrl,
-                                                            title = base.title.ifBlank { book.title },
-                                                            author = base.author.ifBlank { book.authorNames }
-                                                        )
-                                                        libraryRepository.addBookToLibrary(uid, updated)
-                                                        if (!isInLibrary) {
-                                                            isInLibrary = true
-                                                        }
-                                                    }
-                                                }
-                                            }
+                                            onSuccess = saveDownloadedToLibrary
                                         )
                                     },
                                     modifier = Modifier.weight(1f)
@@ -397,36 +415,25 @@ fun GutenbergBookDetailScreen(
                             }
                         }
                         
-                        Divider(modifier = Modifier.padding(horizontal = 16.dp))
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         
                         // Available formats
-                        Column(
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Text(
-                                text = "Available Formats",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                if (book.epubUrl != null) {
-                                    FormatChip(format = "EPUB", icon = Icons.Default.Book)
-                                }
-                                if (book.pdfUrl != null) {
-                                    FormatChip(format = "PDF", icon = Icons.Default.PictureAsPdf)
-                                }
-                                if (book.textUrl != null) {
-                                    FormatChip(format = "TXT", icon = Icons.Default.Description)
-                                }
-                                if (book.htmlUrl != null) {
-                                    FormatChip(format = "HTML", icon = Icons.Default.Language)
-                                }
-                            }
-                        }
+                        GutenbergAvailableFormatsSection(
+                            book = book,
+                            downloadedBook = downloadedBook,
+                            isDownloading = isDownloading,
+                            currentProgress = currentProgress,
+                            onReadClick = onReadClick,
+                            onDownloadFormat = { option ->
+                                viewModel.downloadBookFormat(
+                                    book = book,
+                                    downloadUrl = option.url,
+                                    format = option.format,
+                                    onSuccess = saveDownloadedToLibrary
+                                )
+                            },
+                            onCancelDownload = { viewModel.cancelDownload(book.id) }
+                        )
                         
                         // Subjects/Categories
                         if (!book.subjects.isNullOrEmpty()) {
@@ -733,32 +740,158 @@ fun GutenbergBookDetailScreen(
 }
 
 @Composable
-private fun FormatChip(
-    format: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector
+private fun GutenbergAvailableFormatsSection(
+    book: GutendexBook,
+    downloadedBook: DownloadedBook?,
+    isDownloading: Boolean,
+    currentProgress: Float,
+    onReadClick: (GutendexBook, String?, BookFormat?) -> Unit,
+    onDownloadFormat: (GutenbergFormatOption) -> Unit,
+    onCancelDownload: () -> Unit
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSecondaryContainer
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(
-                text = format,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer
+    val options = book.availableFormatOptions()
+    if (options.isEmpty()) return
+
+    Column(modifier = Modifier.padding(16.dp)) {
+        Text(
+            text = "Available Formats",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+
+        options.forEach { option ->
+            val isDownloadedFormat = downloadedBook?.format == option.format
+            DownloadableFormatRow(
+                title = option.label,
+                subtitle = option.subtitle,
+                icon = option.icon,
+                isDownloading = isDownloading,
+                progress = currentProgress,
+                isDownloaded = isDownloadedFormat,
+                onRead = {
+                    onReadClick(
+                        book,
+                        downloadedBook?.fileUri ?: downloadedBook?.filePath,
+                        downloadedBook?.format
+                    )
+                },
+                onDownload = { onDownloadFormat(option) },
+                onCancel = onCancelDownload
             )
         }
     }
+}
+
+@Composable
+private fun DownloadableFormatRow(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isDownloading: Boolean,
+    progress: Float,
+    isDownloaded: Boolean,
+    onRead: () -> Unit,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                when {
+                    isDownloaded -> {
+                        Button(onClick = onRead) {
+                            Text("Read")
+                        }
+                    }
+                    isDownloading -> {
+                        OutlinedButton(onClick = onCancel) {
+                            Text("Cancel")
+                        }
+                    }
+                    else -> {
+                        Button(onClick = onDownload) {
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Download")
+                        }
+                    }
+                }
+            }
+
+            if (isDownloading) {
+                Spacer(modifier = Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${(progress * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private data class GutenbergFormatOption(
+    val label: String,
+    val subtitle: String,
+    val url: String,
+    val format: BookFormat,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+private fun GutendexBook.availableFormatOptions(): List<GutenbergFormatOption> {
+    return listOfNotNull(
+        epubUrl?.let {
+            GutenbergFormatOption("EPUB", "Best for in-app reading", it, BookFormat.EPUB, Icons.Default.Book)
+        },
+        pdfUrl?.let {
+            GutenbergFormatOption("PDF", "Fixed page layout", it, BookFormat.PDF, Icons.Default.PictureAsPdf)
+        },
+        textUrl?.let {
+            GutenbergFormatOption("TXT", "Plain text edition", it, BookFormat.TXT, Icons.Default.Description)
+        },
+        htmlUrl?.let {
+            GutenbergFormatOption("HTML", "Browser-readable edition", it, BookFormat.HTML, Icons.Default.Language)
+        }
+    )
 }
 
 private fun formatCount(count: Int): String {

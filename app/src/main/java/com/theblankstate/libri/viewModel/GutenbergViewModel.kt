@@ -557,7 +557,16 @@ class GutenbergViewModel(application: Application) : AndroidViewModel(applicatio
         }
         
         val (downloadUrl, format) = bestFormat
-        
+        downloadBookFormat(book, downloadUrl, format, onSuccess, onError)
+    }
+
+    fun downloadBookFormat(
+        book: GutendexBook,
+        downloadUrl: String,
+        format: BookFormat,
+        onSuccess: (DownloadedBook) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
         // Check if already downloading
         if (_downloadingBookIds.value.contains(book.id)) {
             Toast.makeText(context, "${book.title} is already downloading", Toast.LENGTH_SHORT).show()

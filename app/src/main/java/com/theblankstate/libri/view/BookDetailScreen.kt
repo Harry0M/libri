@@ -2,13 +2,15 @@ package com.theblankstate.libri.view
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
@@ -25,8 +27,6 @@ import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -38,8 +38,14 @@ import androidx.compose.ui.platform.LocalUriHandler
 import coil.request.ImageRequest
 import com.theblankstate.libri.viewModel.BookViewModel
 import com.theblankstate.libri.viewModel.LibraryViewModel
+import com.theblankstate.libri.datamodel.BookshelfCounts
+import com.theblankstate.libri.datamodel.EditionModel
 import com.theblankstate.libri.datamodel.LibraryBook
+import com.theblankstate.libri.datamodel.RatingsModel
 import com.theblankstate.libri.datamodel.ReadingStatus
+import com.theblankstate.libri.datamodel.WorkDetailModel
+import com.theblankstate.libri.datamodel.bookModel
+import com.theblankstate.libri.view.components.LibriTopAppBar
 import androidx.lifecycle.viewmodel.compose.viewModel as composeViewModel
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.theblankstate.libri.viewModel.GutenbergViewModel
@@ -85,6 +91,8 @@ fun BookDetailScreen(
     val isLoadingArchiveDownloadOptions by viewModel.isLoadingArchiveDownloadOptions.collectAsState()
     val resolvedArchiveId by viewModel.resolvedArchiveIdentifier.collectAsState()
     val downloadedBooks by libraryViewModel.downloadedBooks.collectAsState()
+    val libraryDownloadingBookIds by libraryViewModel.downloadingBookIds.collectAsState()
+    val libraryDownloadProgress by libraryViewModel.downloadProgressMap.collectAsState()
     val book = selectedBook
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
@@ -205,79 +213,19 @@ fun BookDetailScreen(
                 ?: 0
         )
     }
+    val activeArchiveDownloadId = archiveDownloadOptions
+        .map { "${archiveLibraryBook.id}_${it.extension}" }
+        .firstOrNull { libraryDownloadingBookIds.contains(it) }
+    val activeArchiveDownloadProgress = activeArchiveDownloadId?.let { libraryDownloadProgress[it] }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
-        contentWindowInsets = WindowInsets(0, 0, 0, 0)
-    ) { paddingValues ->
-        // key() on the book's identity ensures all local Compose state (scroll position,
-        // expanded states, etc.) resets when navigating to a different book.
-        key(bookIdentityKey) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Header Background (Partial height)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(400.dp)
-            ) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(book.coverUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .blur(radius = 20.dp),
-                    contentScale = ContentScale.Crop,
-                    alpha = 0.7f
-                )
-                // Dark overlay for header text readability
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.3f))
-                )
-                // Gradient to blend into surface
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.Transparent,
-                                    MaterialTheme.colorScheme.surface
-                                )
-                            )
-                        )
-                )
-            }
-
-            // Content
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = paddingValues.calculateBottomPadding())
-                    .statusBarsPadding()
-            ) {
-                // Top Bar
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    IconButton(onClick = onBackClick) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White // Keep white as it's on the dark header
-                        )
-                    }
-
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            LibriTopAppBar(
+                title = "Book Details",
+                onBackClick = onBackClick,
+                actions = {
                     IconButton(onClick = {
                         val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                             type = "text/plain"
@@ -289,193 +237,56 @@ fun BookDetailScreen(
                     }) {
                         Icon(
                             imageVector = Icons.Default.Share,
-                            contentDescription = "Share",
-                            tint = Color.White // Keep white as it's on the dark header
+                            contentDescription = "Share"
                         )
                     }
                 }
+            )
+        }
+    ) { paddingValues ->
+        // key() on the book's identity ensures all local Compose state (scroll position,
+        // expanded states, etc.) resets when navigating to a different book.
+        key(bookIdentityKey) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Content
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                OpenLibraryBookHeroHeader(
+                    book = book,
+                    workDetail = workDetail,
+                    ratings = ratings,
+                    isCheckingFormats = isLoadingArchiveDownloadOptions,
+                    downloadProgress = activeArchiveDownloadProgress,
+                    availableFormatLabels = archiveDownloadOptions
+                        .mapNotNull { it.readerFormat?.name ?: it.label.takeIf { label -> label.isNotBlank() } }
+                        .distinct()
+                        .take(4)
+                )
 
-                // Book Cover
-                Card(
-                    modifier = Modifier
-                        .height(280.dp)
-                        .width(180.dp)
-                        .align(Alignment.CenterHorizontally),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(book.coverUrl)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "Book Cover",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                }
+                OpenLibraryActionSection(
+                    book = book,
+                    archiveDownloadOptions = archiveDownloadOptions,
+                    effectiveArchiveId = effectiveArchiveId,
+                    isLoadingArchiveDownloadOptions = isLoadingArchiveDownloadOptions,
+                    isUserLoggedIn = isUserLoggedIn,
+                    uid = uid,
+                    onBorrowClick = { showBorrowDialog = true },
+                    onLoginRequired = onLoginRequired,
+                    onAddToLibraryClick = { showAddToLibraryDialog = true },
+                    onReadClick = onReadClick,
+                    onReadArchiveOption = onReadArchiveOption
+                )
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Book Info
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = book.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface, // Standard text color
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = book.author_name?.joinToString(", ") ?: "Unknown Author",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, // Standard variant color
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Genre
-                    val subjects = workDetail?.subjects?.take(5) ?: book.subject?.take(3)
-                    subjects?.let { subs ->
-                        Text(
-                            text = subs.joinToString(" • "),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-
-                    book.first_publish_year?.let {
-                        Text(
-                            text = "Published: $it",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(32.dp))
-
-                // Reading Status (Bookshelves)
                 bookshelves?.counts?.let { counts ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        StatusItem(count = counts.wantToRead, label = "Want to Read", color = MaterialTheme.colorScheme.onSurface)
-                        StatusItem(count = counts.currentlyReading, label = "Reading", color = MaterialTheme.colorScheme.onSurface)
-                        StatusItem(count = counts.alreadyRead, label = "Read", color = MaterialTheme.colorScheme.onSurface)
-                    }
-                    Spacer(modifier = Modifier.height(24.dp))
+                    OpenLibraryStatsSection(counts = counts)
                 }
-
-                // Action Buttons
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    val isBorrowable = book.ebook_access == "borrowable"
-                    val isPublic = book.ebook_access == "public" || book.has_fulltext == true
-
-                    // Smart Read Now — prefer native reader for downloadable formats
-                    val bestNativeOption = archiveDownloadOptions
-                        .firstOrNull { it.readerFormat == BookFormat.EPUB }
-                        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.PDF }
-                        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.TXT }
-                        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.HTML }
-                    val canReadNatively = bestNativeOption != null && effectiveArchiveId != null
-                    val canReadEmbedded = effectiveArchiveId != null
-
-                    if (isBorrowable) {
-                        Button(
-                            onClick = {
-                                if (isUserLoggedIn) {
-                                    showBorrowDialog = true
-                                } else {
-                                    onLoginRequired()
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 8.dp)
-                        ) {
-                            Text(text = "Borrow for Free", color = Color.White)
-                        }
-                    } else {
-                        Button(
-                            onClick = {
-                                if (canReadNatively) {
-                                    // Route to native EPUB/PDF/TXT reader
-                                    onReadArchiveOption(
-                                        effectiveArchiveId!!,
-                                        book.title,
-                                        book.author_name?.firstOrNull(),
-                                        book.coverUrl,
-                                        bestNativeOption!!,
-                                        null
-                                    )
-                                } else if (canReadEmbedded) {
-                                    // Fallback to IA embedded web reader (never breaks)
-                                    onReadClick(
-                                        effectiveArchiveId!!,
-                                        book.title,
-                                        book.author_name?.firstOrNull(),
-                                        book.coverUrl
-                                    )
-                                }
-                            },
-                            enabled = canReadNatively || canReadEmbedded || isLoadingArchiveDownloadOptions,
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 8.dp)
-                        ) {
-                            if (isLoadingArchiveDownloadOptions) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
-                                )
-                            } else {
-                                Text(
-                                    text = if (canReadNatively) {
-                                        "Read in App"
-                                    } else {
-                                        "Read Now"
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = { 
-                            if (uid != null) {
-                                showAddToLibraryDialog = true
-                            } else {
-                                onLoginRequired()
-                            }
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 8.dp)
-                    ) {
-                        Text(text = "Add to Library")
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
 
                 // Download Options & Free Ebook Sources
                 // (Extracted to separate composable to fix compiler instruction limit)
@@ -498,302 +309,24 @@ fun BookDetailScreen(
                     onShowSuccessSnackbar = { showSuccessSnackbar = true }
                 )
 
-                // Description / Metadata Section
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp)
-                ) {
-                    Text(
-                        text = "About this book",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                val description = workDetail?.getDescriptionText() 
-                    ?: book.firstSentence?.firstOrNull() 
-                    ?: "Description not available. Sorry for the inconvenience."
-                
-                var expanded by remember(description) { mutableStateOf(false) }
-                var hasOverflow by remember(description) { mutableStateOf(false) }
-
-                Text(
-                    text = description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.5,
-                    maxLines = if (expanded) Int.MAX_VALUE else 15,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    onTextLayout = { textLayoutResult ->
-                        if (textLayoutResult.hasVisualOverflow) {
-                            hasOverflow = true
-                        }
-                    }
+                OpenLibrarySubjectsSection(book = book, workDetail = workDetail)
+                OpenLibraryAboutSection(
+                    book = book,
+                    workDetail = workDetail,
+                    editions = editions,
+                    ratings = ratings
                 )
-
-                if (hasOverflow) {
-                    TextButton(
-                        onClick = { expanded = !expanded },
-                        modifier = Modifier.padding(top = 4.dp)
-                    ) {
-                        Text(if (expanded) "Read Less" else "Read More")
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                    
-                    // Additional Metadata
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
-                            .padding(16.dp)
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                MetadataItem(
-                                    label = "Pages", 
-                                    value = book.number_of_pages?.toString() ?: book.edition_count?.toString() ?: "N/A", 
-                                    icon = Icons.Default.MenuBook,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Box(modifier = Modifier.weight(1f)) {
-                                MetadataItem(
-                                    label = "Language", 
-                                    value = book.language?.firstOrNull()?.uppercase() ?: "ENG", 
-                                    icon = Icons.Default.Language,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                        
-                        Spacer(modifier = Modifier.height(16.dp))
-                        
-                        Row(modifier = Modifier.fillMaxWidth()) {
-                            Box(modifier = Modifier.weight(1f)) {
-                                MetadataItem(
-                                    label = "Rating", 
-                                    value = ratings?.summary?.average?.let { String.format("%.1f", it) } ?: book.ratings_average?.toString()?.take(3) ?: "N/A", 
-                                    icon = Icons.Default.Star,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Box(modifier = Modifier.weight(1f)) {
-                                val displayIsbn = book.isbn?.firstOrNull() 
-                                    ?: editions.firstOrNull { !it.isbn13.isNullOrEmpty() }?.isbn13?.firstOrNull()
-                                    ?: editions.firstOrNull { !it.isbn10.isNullOrEmpty() }?.isbn10?.firstOrNull()
-                                    ?: "N/A"
-                                MetadataItem(
-                                    label = "ISBN", 
-                                    value = displayIsbn, 
-                                    icon = Icons.Default.QrCode,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Publisher and Date
-                        if (!book.publisher.isNullOrEmpty() || !book.publish_date.isNullOrEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                book.publisher?.firstOrNull()?.let {
-                                    MetadataItem(label = "Publisher", value = it, color = MaterialTheme.colorScheme.onSurface)
-                                }
-                                book.displayPublishDate?.let {
-                                    MetadataItem(label = "Published", value = it, color = MaterialTheme.colorScheme.onSurface)
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
-
-                        // Classifications
-                        if (!book.dewey_decimal_class.isNullOrEmpty() || !book.lcc_number.isNullOrEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                book.dewey_decimal_class?.firstOrNull()?.let {
-                                    MetadataItem(label = "Dewey", value = it, color = MaterialTheme.colorScheme.onSurface)
-                                }
-                                book.lcc_number?.firstOrNull()?.let {
-                                    MetadataItem(label = "LCC", value = it, color = MaterialTheme.colorScheme.onSurface)
-                                }
-                            }
-                        }
-                    
-                    // Subject Places/People/Times
-                    Column(modifier = Modifier.padding(top = 16.dp)) {
-                        workDetail?.subjectPlaces?.take(5)?.let { places ->
-                            Text(
-                                text = "Places: ${places.joinToString(", ")}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                        }
-                        workDetail?.subjectPeople?.take(5)?.let { people ->
-                            Text(
-                                text = "People: ${people.joinToString(", ")}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                        }
-                        workDetail?.subjectTimes?.take(5)?.let { times ->
-                            Text(
-                                text = "Times: ${times.joinToString(", ")}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    // Excerpts
-                    workDetail?.excerpts?.firstOrNull()?.let { excerpt ->
-                        Spacer(modifier = Modifier.height(24.dp))
-                        Text(
-                            text = "Excerpt",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "\"${excerpt.text}\"",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (!excerpt.comment.isNullOrEmpty()) {
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = "- ${excerpt.comment}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Ratings Breakdown
-                ratings?.counts?.let { counts ->
-                    Column(modifier = Modifier.padding(horizontal = 24.dp)) {
-                        Text(
-                            text = "Ratings",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        val total = counts.values.sum().toFloat()
-                        (5 downTo 1).forEach { star ->
-                            val count = counts[star.toString()] ?: 0
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(text = "$star ★", color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.width(30.dp))
-                                LinearProgressIndicator(
-                                    progress = { if (total > 0) count / total else 0f },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(8.dp)
-                                        .padding(horizontal = 8.dp),
-                                    color = Color(0xFFFFC107),
-                                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                                )
-                                Text(text = count.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(40.dp))
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(24.dp))
-                    }
-                }
-
-                // Editions
-                if (editions.isNotEmpty()) {
-                    Column(modifier = Modifier.padding(horizontal = 24.dp)) {
-                        Text(
-                            text = "Editions",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        editions.take(5).forEach { edition ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                                ),
-                                onClick = {
-                                    edition.key?.let { key ->
-                                        onBookClick(key)
-                                    }
-                                }
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(
-                                        text = edition.title ?: "Unknown Title",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = "${edition.publishers?.joinToString(", ") ?: "Unknown Publisher"} • ${edition.publishDate ?: "Unknown Date"}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                        
-                        // See All Editions button
-                        OutlinedButton(
-                            onClick = {
-                                book.key?.let { key ->
-                                    val workId = key.removePrefix("/works/")
-                                    onSeeAllEditionsClick(workId)
-                                }
-                            },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp)
-                        ) {
-                            Text(text = "See All Editions")
-                        }
-                        
-                        Spacer(modifier = Modifier.height(24.dp))
-                    }
-                }
-
-                // Related Books Section
-                if (similarBooks.isNotEmpty()) {
-                    Text(
-                        text = "You might also like",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(start = 24.dp, bottom = 16.dp)
-                    )
-                    RelatedBookCarousel(books = similarBooks, onBookClick = onBookClick)
-                    Spacer(modifier = Modifier.height(32.dp))
-                }
+                OpenLibraryRatingsSection(ratings = ratings)
+                OpenLibraryEditionsSection(
+                    book = book,
+                    editions = editions,
+                    onBookClick = onBookClick,
+                    onSeeAllEditionsClick = onSeeAllEditionsClick
+                )
+                OpenLibraryRelatedSection(
+                    books = similarBooks,
+                    onBookClick = onBookClick
+                )
                 
                 Spacer(modifier = Modifier.height(48.dp))
             }
@@ -802,7 +335,7 @@ fun BookDetailScreen(
         } // end key(bookIdentityKey)
         
         // Add to Library Dialog with Shelves Support
-        if (showAddToLibraryDialog && book != null) {
+        if (showAddToLibraryDialog) {
             val shelvesViewModel: com.theblankstate.libri.viewModel.ShelvesViewModel = composeViewModel()
             val allShelves by shelvesViewModel.allShelves.collectAsState()
             var showCreateShelfDialog by remember { mutableStateOf(false) }
@@ -927,6 +460,842 @@ fun BookDetailScreen(
 }
 
 @Composable
+private fun OpenLibraryBookHeroHeader(
+    book: bookModel,
+    workDetail: WorkDetailModel?,
+    ratings: RatingsModel?,
+    isCheckingFormats: Boolean,
+    downloadProgress: Float?,
+    availableFormatLabels: List<String>
+) {
+    val context = LocalContext.current
+    val subjects = workDetail?.subjects?.take(2) ?: book.subject?.take(2).orEmpty()
+    val accessLabel = when {
+        book.ebook_access == "borrowable" -> "Borrowable"
+        book.ebook_access == "public" || book.has_fulltext == true -> "Readable"
+        else -> "Catalog"
+    }
+    val ratingText = ratings?.summary?.average?.let { String.format("%.1f ★", it) }
+        ?: book.ratings_average?.let { String.format("%.1f ★", it) }
+    val availabilityText = listOfNotNull(
+        accessLabel,
+        book.language?.firstOrNull()?.uppercase()
+    ).joinToString(" • ").takeIf { it.isNotBlank() }
+    val metadata = listOfNotNull(
+        book.first_publish_year?.let { "Published $it" },
+        availabilityText,
+        ratingText
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(280.dp)
+            .background(MaterialTheme.colorScheme.primaryContainer)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Card(
+                modifier = Modifier
+                    .width(150.dp)
+                    .fillMaxHeight(),
+                elevation = CardDefaults.cardElevation(8.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(book.coverUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = book.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = book.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 3,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = book.author_name?.joinToString(", ") ?: "Unknown Author",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f),
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                OpenLibraryHeroPill(
+                    text = "Open Library",
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                )
+
+                if (metadata.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    metadata.take(3).forEach { item ->
+                        Text(
+                            text = item,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                if (subjects.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = subjects.joinToString(" • "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+
+                when {
+                    downloadProgress != null -> {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Downloading ${(downloadProgress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = { downloadProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.16f)
+                        )
+                    }
+                    isCheckingFormats -> {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Checking formats...",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.16f)
+                        )
+                    }
+                    availableFormatLabels.isNotEmpty() -> {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "${availableFormatLabels.joinToString(" • ")} available",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryHeroPill(
+    text: String,
+    containerColor: Color,
+    contentColor: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = containerColor
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = contentColor,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun OpenLibraryActionSection(
+    book: bookModel,
+    archiveDownloadOptions: List<ArchiveDownloadOption>,
+    effectiveArchiveId: String?,
+    isLoadingArchiveDownloadOptions: Boolean,
+    isUserLoggedIn: Boolean,
+    uid: String?,
+    onBorrowClick: () -> Unit,
+    onLoginRequired: () -> Unit,
+    onAddToLibraryClick: () -> Unit,
+    onReadClick: (String, String?, String?, String?) -> Unit,
+    onReadArchiveOption: (String, String?, String?, String?, ArchiveDownloadOption, String?) -> Unit
+) {
+    val isBorrowable = book.ebook_access == "borrowable"
+    val bestNativeOption = archiveDownloadOptions
+        .firstOrNull { it.readerFormat == BookFormat.EPUB }
+        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.PDF }
+        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.TXT }
+        ?: archiveDownloadOptions.firstOrNull { it.readerFormat == BookFormat.HTML }
+    val canReadNatively = bestNativeOption != null && effectiveArchiveId != null
+    val canReadEmbedded = effectiveArchiveId != null
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (isBorrowable) {
+            Button(
+                onClick = {
+                    if (isUserLoggedIn) {
+                        onBorrowClick()
+                    } else {
+                        onLoginRequired()
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Borrow Free", color = Color.White, maxLines = 1)
+            }
+        } else {
+            Button(
+                onClick = {
+                    if (canReadNatively) {
+                        onReadArchiveOption(
+                            effectiveArchiveId!!,
+                            book.title,
+                            book.author_name?.firstOrNull(),
+                            book.coverUrl,
+                            bestNativeOption!!,
+                            null
+                        )
+                    } else if (canReadEmbedded) {
+                        onReadClick(
+                            effectiveArchiveId!!,
+                            book.title,
+                            book.author_name?.firstOrNull(),
+                            book.coverUrl
+                        )
+                    }
+                },
+                enabled = canReadNatively || canReadEmbedded || isLoadingArchiveDownloadOptions,
+                modifier = Modifier.weight(1f)
+            ) {
+                if (isLoadingArchiveDownloadOptions) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(if (canReadNatively) "Read in App" else "Read Now", maxLines = 1)
+                }
+            }
+        }
+
+        OutlinedButton(
+            onClick = {
+                if (uid != null) {
+                    onAddToLibraryClick()
+                } else {
+                    onLoginRequired()
+                }
+            },
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(Icons.Default.BookmarkBorder, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Add", maxLines = 1)
+        }
+    }
+
+    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+}
+
+@Composable
+private fun OpenLibraryStatsSection(counts: BookshelfCounts) {
+    OpenLibraryDetailSection(title = "Community") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OpenLibraryStatusCard(
+                count = counts.wantToRead,
+                label = "Want",
+                modifier = Modifier.weight(1f)
+            )
+            OpenLibraryStatusCard(
+                count = counts.currentlyReading,
+                label = "Reading",
+                modifier = Modifier.weight(1f)
+            )
+            OpenLibraryStatusCard(
+                count = counts.alreadyRead,
+                label = "Read",
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryStatusCard(
+    count: Int,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 14.dp, horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = count.toString(),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun OpenLibrarySubjectsSection(
+    book: bookModel,
+    workDetail: WorkDetailModel?
+) {
+    val subjects = (workDetail?.subjects ?: book.subject.orEmpty()).distinct().take(12)
+    if (subjects.isEmpty()) return
+
+    OpenLibraryDetailSection(title = "Subjects") {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(subjects) { subject ->
+                OpenLibraryTagPill(text = subject)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryAboutSection(
+    book: bookModel,
+    workDetail: WorkDetailModel?,
+    editions: List<EditionModel>,
+    ratings: RatingsModel?
+) {
+    val description = workDetail?.getDescriptionText()
+        ?: book.firstSentence?.firstOrNull()
+        ?: "Description not available. Sorry for the inconvenience."
+    var expanded by remember(description) { mutableStateOf(false) }
+    var hasOverflow by remember(description) { mutableStateOf(false) }
+
+    OpenLibraryDetailSection(title = "About this book") {
+        Text(
+            text = description,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = MaterialTheme.typography.bodyMedium.lineHeight * 1.5,
+            maxLines = if (expanded) Int.MAX_VALUE else 15,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            onTextLayout = { textLayoutResult ->
+                if (textLayoutResult.hasVisualOverflow) {
+                    hasOverflow = true
+                }
+            }
+        )
+
+        if (hasOverflow) {
+            TextButton(
+                onClick = { expanded = !expanded },
+                modifier = Modifier.padding(top = 4.dp)
+            ) {
+                Text(if (expanded) "Read Less" else "Read More")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        OpenLibraryMetadataGrid(
+            items = buildOpenLibraryMetadataItems(book, editions, ratings)
+        )
+
+        OpenLibraryContextCards(workDetail = workDetail)
+    }
+
+    workDetail?.excerpts?.firstOrNull()?.let { excerpt ->
+        OpenLibraryDetailSection(title = "Excerpt") {
+            OpenLibraryInfoCard {
+                Text(
+                    text = "\"${excerpt.text}\"",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!excerpt.comment.isNullOrEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "- ${excerpt.comment}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryRatingsSection(ratings: RatingsModel?) {
+    val counts = ratings?.counts ?: return
+    val total = counts.values.sum().toFloat()
+
+    OpenLibraryDetailSection(title = "Ratings") {
+        OpenLibraryInfoCard {
+            (5 downTo 1).forEach { star ->
+                val count = counts[star.toString()] ?: 0
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "$star ★",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.width(36.dp),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    LinearProgressIndicator(
+                        progress = { if (total > 0) count / total else 0f },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(8.dp)
+                            .padding(horizontal = 8.dp),
+                        color = Color(0xFFFFC107),
+                        trackColor = MaterialTheme.colorScheme.surface
+                    )
+                    Text(
+                        text = count.toString(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(40.dp),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (star > 1) Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryEditionsSection(
+    book: bookModel,
+    editions: List<EditionModel>,
+    onBookClick: (String) -> Unit,
+    onSeeAllEditionsClick: (String) -> Unit
+) {
+    if (editions.isEmpty()) return
+
+    OpenLibraryDetailSection(title = "Editions") {
+        editions.take(5).forEach { edition ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
+                shape = RoundedCornerShape(16.dp),
+                onClick = {
+                    edition.key?.let { key -> onBookClick(key) }
+                },
+                enabled = edition.key != null
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = edition.title ?: "Unknown Title",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${edition.publishers?.joinToString(", ") ?: "Unknown Publisher"} • ${edition.publishDate ?: "Unknown Date"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        OutlinedButton(
+            onClick = {
+                book.key?.let { key ->
+                    val workId = key.removePrefix("/works/")
+                    onSeeAllEditionsClick(workId)
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+        ) {
+            Text(text = "See All Editions")
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryRelatedSection(
+    books: List<bookModel>,
+    onBookClick: (String) -> Unit
+) {
+    if (books.isEmpty()) return
+
+    OpenLibraryDetailSection(title = "You might also like") {
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(books) { book ->
+                OpenLibraryRelatedBookCard(book = book, onBookClick = onBookClick)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryRelatedBookCard(
+    book: bookModel,
+    onBookClick: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.width(148.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp),
+        onClick = { book.key?.let(onBookClick) },
+        enabled = book.key != null
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(book.coverUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = book.title,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = book.title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+            Text(
+                text = book.author_name?.firstOrNull() ?: "Unknown Author",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryDetailSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        content()
+    }
+    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+}
+
+@Composable
+private fun OpenLibraryInfoCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun OpenLibraryMetadataGrid(items: List<OpenLibraryMetadataUiItem>) {
+    items.chunked(2).forEachIndexed { index, rowItems ->
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            rowItems.forEach { item ->
+                OpenLibraryMetadataTile(
+                    item = item,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (rowItems.size == 1) {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+        }
+        if (index < items.chunked(2).lastIndex) {
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun OpenLibraryMetadataTile(
+    item: OpenLibraryMetadataUiItem,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        MetadataItem(
+            label = item.label,
+            value = item.value,
+            icon = item.icon,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(12.dp)
+        )
+    }
+}
+
+@Composable
+private fun OpenLibraryContextCards(workDetail: WorkDetailModel?) {
+    val rows = listOfNotNull(
+        workDetail?.subjectPlaces?.take(5)?.joinToString(", ")?.let { "Places" to it },
+        workDetail?.subjectPeople?.take(5)?.joinToString(", ")?.let { "People" to it },
+        workDetail?.subjectTimes?.take(5)?.joinToString(", ")?.let { "Times" to it }
+    )
+    if (rows.isEmpty()) return
+
+    Spacer(modifier = Modifier.height(12.dp))
+    rows.forEach { (label, value) ->
+        OpenLibraryInfoCard {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 3,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun OpenLibraryTagPill(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+    }
+}
+
+private data class OpenLibraryMetadataUiItem(
+    val label: String,
+    val value: String,
+    val icon: ImageVector?
+)
+
+@Composable
+private fun buildOpenLibraryMetadataItems(
+    book: bookModel,
+    editions: List<EditionModel>,
+    ratings: RatingsModel?
+): List<OpenLibraryMetadataUiItem> {
+    val displayIsbn = book.isbn?.firstOrNull()
+        ?: editions.firstOrNull { !it.isbn13.isNullOrEmpty() }?.isbn13?.firstOrNull()
+        ?: editions.firstOrNull { !it.isbn10.isNullOrEmpty() }?.isbn10?.firstOrNull()
+        ?: "N/A"
+
+    return listOfNotNull(
+        OpenLibraryMetadataUiItem(
+            label = "Pages",
+            value = book.number_of_pages?.toString() ?: book.edition_count?.toString() ?: "N/A",
+            icon = Icons.AutoMirrored.Filled.MenuBook
+        ),
+        OpenLibraryMetadataUiItem(
+            label = "Language",
+            value = book.language?.firstOrNull()?.uppercase() ?: "ENG",
+            icon = Icons.Default.Language
+        ),
+        OpenLibraryMetadataUiItem(
+            label = "Rating",
+            value = ratings?.summary?.average?.let { String.format("%.1f", it) }
+                ?: book.ratings_average?.toString()?.take(3)
+                ?: "N/A",
+            icon = Icons.Default.Star
+        ),
+        OpenLibraryMetadataUiItem(
+            label = "ISBN",
+            value = displayIsbn,
+            icon = Icons.Default.QrCode
+        ),
+        book.publisher?.firstOrNull()?.let {
+            OpenLibraryMetadataUiItem("Publisher", it, Icons.Default.Book)
+        },
+        book.displayPublishDate?.let {
+            OpenLibraryMetadataUiItem("Published", it, Icons.AutoMirrored.Filled.MenuBook)
+        },
+        book.dewey_decimal_class?.firstOrNull()?.let {
+            OpenLibraryMetadataUiItem("Dewey", it, Icons.Default.Book)
+        },
+        book.lcc_number?.firstOrNull()?.let {
+            OpenLibraryMetadataUiItem("LCC", it, Icons.Default.Book)
+        }
+    )
+}
+
+@Composable
+private fun OpenLibraryExternalSourceCard(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Language,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+            OutlinedButton(onClick = onClick) {
+                Text("Open")
+            }
+        }
+    }
+}
+
+@Composable
 private fun ArchiveDownloadOptionRow(
     option: ArchiveDownloadOption,
     isDownloading: Boolean,
@@ -942,7 +1311,7 @@ private fun ArchiveDownloadOptionRow(
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
         ),
         shape = RoundedCornerShape(16.dp)
     ) {
@@ -958,7 +1327,7 @@ private fun ArchiveDownloadOptionRow(
                 Icon(
                     imageVector = Icons.Default.Book,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.secondary,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(22.dp)
                 )
                 Spacer(modifier = Modifier.width(10.dp))
@@ -1081,11 +1450,12 @@ fun MetadataItem(
     label: String, 
     value: String, 
     icon: ImageVector? = null,
-    color: Color = MaterialTheme.colorScheme.onSurface
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    modifier: Modifier = Modifier
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
     ) {
         if (icon != null) {
             Box(
@@ -1118,23 +1488,6 @@ fun MetadataItem(
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
         }
-    }
-}
-
-@Composable
-fun StatusItem(count: Int, label: String, color: Color = Color.White) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            text = count.toString(),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = color.copy(alpha = 0.6f)
-        )
     }
 }
 
@@ -1176,8 +1529,6 @@ private fun BookDownloadSourcesSection(
     val gutenbergProgress = gutenbergId?.let { downloadProgress[it] } ?: 0f
     val libraryDownloadingBookIds by libraryViewModel.downloadingBookIds.collectAsState()
     val libraryDownloadProgress by libraryViewModel.downloadProgressMap.collectAsState()
-    val isDownloadingArchiveOption = libraryDownloadingBookIds.contains(archiveLibraryBook.id)
-    val archiveDownloadProgress = libraryDownloadProgress[archiveLibraryBook.id] ?: 0f
 
     // Check if already downloaded
     val isGutenbergDownloaded = gutenbergId?.let { gutenbergViewModel.isBookDownloaded(it) } ?: false
@@ -1188,19 +1539,7 @@ private fun BookDownloadSourcesSection(
 
     // For borrowable books, show purchase options instead of download options
     if (isBorrowableBook) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-        ) {
-            Text(
-                text = "Get This Book",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
+        OpenLibraryDetailSection(title = "Get This Book") {
             // Purchase Hard Copy
             val isbn = book.isbn?.firstOrNull()
             if (isbn != null) {
@@ -1209,7 +1548,7 @@ private fun BookDownloadSourcesSection(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
                     ),
                     shape = RoundedCornerShape(16.dp)
                 ) {
@@ -1222,7 +1561,7 @@ private fun BookDownloadSourcesSection(
                         Icon(
                             imageVector = Icons.Default.Book,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.tertiary,
+                            tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -1255,7 +1594,7 @@ private fun BookDownloadSourcesSection(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
                     ),
                     shape = RoundedCornerShape(16.dp)
                 ) {
@@ -1292,30 +1631,17 @@ private fun BookDownloadSourcesSection(
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
     } else if (isLoadingArchiveDownloadOptions || archiveDownloadOptions.isNotEmpty()) {
         // For public/free books, show download options
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-        ) {
-            Text(
-                text = "Internet Archive Downloads",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
+        OpenLibraryDetailSection(title = "Available Formats") {
             if (isLoadingArchiveDownloadOptions) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                    )
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(16.dp),
@@ -1380,25 +1706,11 @@ private fun BookDownloadSourcesSection(
                     onOpenExternal = { uriHandler.openUri(option.url) }
                 )
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 
     if (hasExternalSources) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-        ) {
-            Text(
-                text = "Free Ebook Sources",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
+        OpenLibraryDetailSection(title = "Free Ebook Sources") {
             // Project Gutenberg - In-app reading
             gutenbergId?.let { id ->
                 Card(
@@ -1406,8 +1718,9 @@ private fun BookDownloadSourcesSection(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                    )
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     Row(
                         modifier = Modifier
@@ -1521,41 +1834,21 @@ private fun BookDownloadSourcesSection(
 
             // Standard Ebooks
             standardEbooksId?.let { id ->
-                OutlinedButton(
-                    onClick = { uriHandler.openUri("https://standardebooks.org/ebooks/$id") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Language,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "Get from Standard Ebooks")
-                }
+                OpenLibraryExternalSourceCard(
+                    title = "Standard Ebooks",
+                    subtitle = "Carefully proofed public-domain edition",
+                    onClick = { uriHandler.openUri("https://standardebooks.org/ebooks/$id") }
+                )
             }
 
             // LibriVox (Audio)
             librivoxId?.let { id ->
-                OutlinedButton(
-                    onClick = { uriHandler.openUri("https://librivox.org/search?q=$id&search_form=advanced") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Language,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = "LibriVox (Audiobook)")
-                }
+                OpenLibraryExternalSourceCard(
+                    title = "LibriVox",
+                    subtitle = "Audiobook availability",
+                    onClick = { uriHandler.openUri("https://librivox.org/search?q=$id&search_form=advanced") }
+                )
             }
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
